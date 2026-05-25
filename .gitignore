@@ -38,6 +38,7 @@ stock_project_for_class/
 .idea/
 .claude/
 .agents/
+skills-lock.json
 *.swp
 *.swo
 
