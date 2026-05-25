@@ -45,6 +45,9 @@ class QlibBTConfig:
     cost_alpha_bps: float = 0.0          # qlib default: no threshold (every top-K name is targeted)
     costs: Literal["qlib", "twse"] = "qlib"
     limit_threshold: float = 0.095       # block trades at +/- 9.5% limit-up/down (TWSE limit is 10%)
+    deal_price: Literal["close", "open"] = "close"
+    # "close" = qlib default (today's close; look-ahead, unimplementable live)
+    # "open"  = today's open (achievable live via pre-9:00 order targeting the opening auction)
 
 
 _COST_TABLES = {
@@ -159,9 +162,12 @@ def run_qlib_backtest_from_predictions(
 
     closes = {c: bars[c].set_index("date")["close"]
               for c in bars if "date" in bars[c].columns}
+    opens = {c: bars[c].set_index("date")["open"] for c in closes}
     highs = {c: bars[c].set_index("date")["high"] for c in closes}
     lows = {c: bars[c].set_index("date")["low"] for c in closes}
     prev_close = {c: closes[c].shift(1) for c in closes}
+    # Pick the deal-price series based on cfg.deal_price (close or open).
+    deal_series = closes if cfg.deal_price == "close" else opens
 
     test_dates = sorted(preds["date"].unique())
     cash = cfg.capital
@@ -193,61 +199,61 @@ def run_qlib_backtest_from_predictions(
             sell_candidates = sell_candidates[: cfg.n_drop]
             buy_candidates = buy_candidates[: cfg.n_drop]
 
-        # --- SELLS at today's close (no fill check, no tick/lot rounding) ---
+        # --- SELLS at today's deal_price (no fill check, no tick/lot rounding) ---
         for code in sell_candidates:
             if code not in closes:
                 continue
-            cl = closes[code].get(today, np.nan)
+            px = deal_series[code].get(today, np.nan)
             hi = highs[code].get(today, np.nan)
             lo = lows[code].get(today, np.nan)
             pc = prev_close[code].get(today, np.nan)
-            if not np.isfinite(cl):
+            if not np.isfinite(px):
                 continue
             if _is_limit_locked(hi, lo, pc, cfg.limit_threshold):
                 continue                                            # halted
             shares = positions[code]
             if shares <= 0:
                 continue
-            notional = shares * float(cl)
+            notional = shares * float(px)
             cost = max(notional * close_cost, min_cost)
             proceeds = notional - cost
             cash += proceeds
 
-            buy_price = entry.get(code, {}).get("price", float(cl))
-            trade_return = ((float(cl) - buy_price) / buy_price) if buy_price > 0 else 0.0
+            buy_price = entry.get(code, {}).get("price", float(px))
+            trade_return = ((float(px) - buy_price) / buy_price) if buy_price > 0 else 0.0
             trades.append({
                 "date": today, "code": code, "side": "SELL",
-                "price": float(cl), "shares": shares, "cashflow": proceeds,
+                "price": float(px), "shares": shares, "cashflow": proceeds,
                 "trade_return": trade_return,
             })
             positions.pop(code, None)
             entry.pop(code, None)
 
-        # --- BUYS at today's close ---
+        # --- BUYS at today's deal_price ---
         slot_capital = cfg.capital / cfg.top_k
         for code in buy_candidates:
             if code not in closes:
                 continue
-            cl = closes[code].get(today, np.nan)
+            px = deal_series[code].get(today, np.nan)
             hi = highs[code].get(today, np.nan)
             lo = lows[code].get(today, np.nan)
             pc = prev_close[code].get(today, np.nan)
-            if not np.isfinite(cl) or cl <= 0:
+            if not np.isfinite(px) or px <= 0:
                 continue
             if _is_limit_locked(hi, lo, pc, cfg.limit_threshold):
                 continue
-            shares = slot_capital / float(cl)                       # fractional shares (qlib does this)
-            notional = shares * float(cl)
+            shares = slot_capital / float(px)                       # fractional shares (qlib does this)
+            notional = shares * float(px)
             cost = max(notional * open_cost, min_cost)
             total = notional + cost
             if total > cash:
                 continue
             cash -= total
             positions[code] = shares
-            entry[code] = {"price": float(cl), "cost": total}
+            entry[code] = {"price": float(px), "cost": total}
             trades.append({
                 "date": today, "code": code, "side": "BUY",
-                "price": float(cl), "shares": shares, "cashflow": total,
+                "price": float(px), "shares": shares, "cashflow": total,
                 "trade_return": np.nan,
             })
 

@@ -907,6 +907,47 @@ The buffer-bps fix targets recovering 10-20 pp of the gap by improving
 fill rate, getting live performance from ~half of +76.5% toward the full
 backtest number.
 
+## Update — opening-auction fill (live-achievable alternative)
+
+[backtest_qlib.py](../src/evaluate/backtest_qlib.py) now supports
+`deal_price="open"`. Practical interpretation: submit a marketable
+limit order **before 9:00 AM** that targets the day's **opening
+auction** (TWSE's opening auction at 9:00 sets the day's open price).
+Achievable in live trading without look-ahead.
+
+Extended comparison (same run 5 predictions, same TWSE costs):
+
+| Pricing | top_k / n_drop | Trades | Cum return | Sharpe | Max DD | Live? |
+|---|---|---|---|---|---|---|
+| **ours** prev_close limit | 10 / 1 | 592 | **+65%** | 0.65 | **−27%** | ✓ at 12:00 |
+| **open** today's open | 10 / 1 | 984 | **+103%** | 0.71 | −52% | **✓ pre-9:00** |
+| qlib close | 10 / 1 | 1006 | +96% | 0.74 | −42% | ✗ |
+| qlib close | 50 / 5 | 3888 | +67% (qlib costs) | 0.92 | −27% | ✗ |
+
+Three new insights:
+
+1. **Open fill beats close fill on return** (+103% vs +96% at same
+   shape). Counter-intuitive — but holding from open captures the full
+   intraday move, while close-to-close only captures gap-plus-overnight.
+2. **Open fill has worst drawdown** (−52%). Opening-auction prices are
+   more volatile than closing prices, so single-day mistakes are
+   amplified.
+3. **All three are similar on Sharpe** (0.65–0.74). The differences are
+   primarily in **absolute return** and **drawdown**, not in
+   risk-adjusted performance.
+
+### Deployment menu
+
+| Schedule | Pricing model | Cum return | Max DD | When to choose |
+|---|---|---|---|---|
+| 12:00 PM (current) | prev_close limit | +65% | −27% | Risk-controlled, fill rate low |
+| pre-9:00 AM (proposed) | open-auction order | +103% | −52% | Higher return, bigger drawdown |
+| post-13:30 with predictive close | close-fill | — | — | **Unimplementable** |
+
+The choice between 12:00-deploy and pre-9:00-deploy is essentially
+**"how much drawdown can you stomach for ~40 pp more return."** Both
+are real, neither is a backtest fantasy.
+
 ## Files referenced
 
 - [src/evaluate/backtest.py](../src/evaluate/backtest.py) — our realistic engine

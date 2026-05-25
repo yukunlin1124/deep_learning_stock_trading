@@ -64,16 +64,28 @@ def main() -> None:
 
     # ---- Configurations to compare ----
     configs = [
-        ("ours (run5 config: top_k=10, n_drop=1, limit at prev_close)",
+        # --- ours: realistic limit-at-prev-close, fill range check ---
+        ("ours: prev_close limit, top_k=10/n_drop=1 (run5 config)",
          "ours", BTConfig(capital=1e8, top_k=10, n_drop=1, cost_alpha_bps=70.0)),
-        ("ours @ top_k=50, n_drop=5 (apples-to-apples count)",
+        ("ours: prev_close limit, top_k=50/n_drop=5 (apples-to-apples count)",
          "ours", BTConfig(capital=1e8, top_k=50, n_drop=5, cost_alpha_bps=70.0)),
-        ("qlib literal default (top_k=50, n_drop=5, close-fill, qlib CN costs)",
-         "qlib", QlibBTConfig(capital=1e8, top_k=50, n_drop=5, costs="qlib")),
-        ("qlib pricing + TWSE costs (top_k=50, n_drop=5)",
-         "qlib", QlibBTConfig(capital=1e8, top_k=50, n_drop=5, costs="twse")),
-        ("qlib pricing matched to our portfolio shape (top_k=10, n_drop=1, TWSE costs)",
-         "qlib", QlibBTConfig(capital=1e8, top_k=10, n_drop=1, costs="twse")),
+        # --- today's open: achievable live via pre-9:00 opening-auction order ---
+        ("open: today's open, top_k=10/n_drop=1, TWSE costs (LIVE-ACHIEVABLE)",
+         "qlib", QlibBTConfig(capital=1e8, top_k=10, n_drop=1,
+                              costs="twse", deal_price="open")),
+        ("open: today's open, top_k=50/n_drop=5, TWSE costs",
+         "qlib", QlibBTConfig(capital=1e8, top_k=50, n_drop=5,
+                              costs="twse", deal_price="open")),
+        # --- qlib: today's close (impossible live -- look-ahead) ---
+        ("qlib close: today's close, top_k=50/n_drop=5, qlib CN costs (literal default)",
+         "qlib", QlibBTConfig(capital=1e8, top_k=50, n_drop=5,
+                              costs="qlib", deal_price="close")),
+        ("qlib close + TWSE costs, top_k=50/n_drop=5",
+         "qlib", QlibBTConfig(capital=1e8, top_k=50, n_drop=5,
+                              costs="twse", deal_price="close")),
+        ("qlib close, top_k=10/n_drop=1, TWSE costs (matches our shape)",
+         "qlib", QlibBTConfig(capital=1e8, top_k=10, n_drop=1,
+                              costs="twse", deal_price="close")),
     ]
 
     rows = []
@@ -104,9 +116,14 @@ def main() -> None:
     print(df.to_string(index=False))
     print()
     print("Reading the table:")
-    print("  - 'ours' = limit at prev_close (tick-rounded), fill iff low<=limit<=high, TWSE costs+lot")
-    print("  - 'qlib' = fills at today's close (always), no tick/lot rounding, costs as configured")
-    print("  - The big diff is FILL RATE, not signal quality")
+    print("  - 'ours'       = limit at prev_close (tick-rounded), fill iff low<=limit<=high, TWSE costs+lot")
+    print("  - 'open'       = fills at today's open (LIVE-ACHIEVABLE via pre-9:00 opening-auction order)")
+    print("  - 'qlib close' = fills at today's close (always; impossible live -- look-ahead)")
+    print()
+    print("Pricing model effect (same model, same costs, same shape):")
+    print("  prev_close limit  -> ~50% fill rate, conservative")
+    print("  open fill         -> ~95-100% fill rate, achievable, no look-ahead beyond open")
+    print("  close fill        -> 100% fill rate, but unimplementable in live trading")
 
 
 if __name__ == "__main__":
