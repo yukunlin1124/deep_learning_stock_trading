@@ -33,9 +33,11 @@ stock_project_for_class/
 # Jupyter
 .ipynb_checkpoints/
 
-# Editor / IDE
+# Editor / IDE / agent tooling
 .vscode/
 .idea/
+.claude/
+.agents/
 *.swp
 *.swo
 
