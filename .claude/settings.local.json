@@ -5,7 +5,8 @@
       "PowerShell(python -m py_compile c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\data_io.py c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\universe.py c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\scrape_universe.py c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\trading_rules.py c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\features.py c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\meta_weighting.py c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\backtest.py c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\train.py c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\fill_rate_sim.py c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\ma20_backtest.py c:\\\\workspace\\\\deep_learning_project\\\\analysis\\\\check_login.py)",
       "PowerShell(if \\($?\\) { \"all .py files compile cleanly\" })",
       "Bash(tail -5 \"/c/Users/yukun/AppData/Local/Temp/claude/c--workspace-deep-learning-project/cb269c70-5d61-4a53-a6a5-255041e94d6f/tasks/bg1bppu4u.output\" && echo \"---cache files:\" && ls /c/workspace/deep_learning_project/analysis/_cache/ | wc -l)",
-      "Read(//c/Users/yukun/AppData/Local/Temp/claude/c--workspace-deep-learning-project/cb269c70-5d61-4a53-a6a5-255041e94d6f/tasks/**)"
+      "Read(//c/Users/yukun/AppData/Local/Temp/claude/c--workspace-deep-learning-project/cb269c70-5d61-4a53-a6a5-255041e94d6f/tasks/**)",
+      "Bash(c:/workspace/deep_learning_stock_trading/.venv/Scripts/python.exe -u -c ' *)"
     ]
   }
 }

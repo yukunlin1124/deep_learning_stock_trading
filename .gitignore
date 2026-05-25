@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.Python
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Cached data + model output artifacts (regeneratable, large)
+analysis/_cache/
+analysis/output/
+analysis/test/output/
+
+# External reference clones — kept locally as untracked siblings of this repo.
+# See README "Prerequisites" for the clone URLs.
+qlib/
+stock_project_for_class/
+
+# Local scratch / experiment outputs
+*.log
+*.pt
+*.ckpt
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage / testing
+.coverage
+.pytest_cache/
+htmlcov/
+
+# mypy / ruff / type checkers
+.mypy_cache/
+.ruff_cache/
+
+# Local config overrides + credentials
+.env
+.env.local
+
+# Daily order logs (per-day timestamped)
+analysis/output/orders_*.csv
