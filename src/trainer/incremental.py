@@ -20,10 +20,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-from analysis.data.handler import PanelTensors
-from analysis.model.double_adapt import DoubleAdapt
-from analysis.evaluate.metrics import cross_sectional_ic
-from analysis.trainer.maml import FOMAMLConfig, panel_to_task, fomaml_step
+from src.data.handler import PanelTensors
+from src.model.double_adapt import DoubleAdapt
+from src.evaluate.metrics import cross_sectional_ic
+from src.trainer.maml import FOMAMLConfig, panel_to_task, fomaml_step
 
 
 @dataclass

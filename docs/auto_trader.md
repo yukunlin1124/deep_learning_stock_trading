@@ -36,7 +36,7 @@ for the API call + retries.
 
 Predictions are computed using **only data available before today's open**,
 so there's no use of T's prices to decide T's orders. The
-[backtest](../analysis/evaluate/backtest.py) has a mild look-ahead (uses
+[backtest](../src/evaluate/backtest.py) has a mild look-ahead (uses
 T's preds to trade on T); the deployment loop fixes it by using T-1's preds
 for T's orders.
 
@@ -57,18 +57,18 @@ the forward pass. The model is frozen between FOMAML updates.
 After the scrape finishes:
 
 ```powershell
-.venv/Scripts/python.exe analysis/scripts/train.py
+.venv/Scripts/python.exe src/scripts/train.py
 ```
 
 This now writes (in addition to the IL/backtest artifacts):
 
 | File | Used by |
 |---|---|
-| `analysis/output/run{N}/final.pt` | model weights |
-| `analysis/output/run{N}/norm_stats.pkl` | RobustZScoreNorm `(median, MAD)` from pretrain |
-| `analysis/output/run{N}/active_universe.json` | the 50 stocks the model is scoring |
-| `analysis/output/run{N}/bt_config.json` | trading config (`top_k=10, n_drop=3, ...`) |
-| `analysis/output/CURRENT` | text file naming the active run (e.g. `run5`) |
+| `src/output/run{N}/final.pt` | model weights |
+| `src/output/run{N}/norm_stats.pkl` | RobustZScoreNorm `(median, MAD)` from pretrain |
+| `src/output/run{N}/active_universe.json` | the 50 stocks the model is scoring |
+| `src/output/run{N}/bt_config.json` | trading config (`top_k=10, n_drop=3, ...`) |
+| `src/output/CURRENT` | text file naming the active run (e.g. `run5`) |
 
 `train.py` auto-increments to the next available `run{N}/` and updates `CURRENT`
 to point at the new run. `deploy_today.py` reads `CURRENT` (or `--run runX` to override).
@@ -89,10 +89,10 @@ gitignored.
 
 ```powershell
 # Preview without submitting orders:
-.venv/Scripts/python.exe analysis/scripts/deploy_today.py --dry-run
+.venv/Scripts/python.exe src/scripts/deploy_today.py --dry-run
 
 # Live:
-.venv/Scripts/python.exe analysis/scripts/deploy_today.py
+.venv/Scripts/python.exe src/scripts/deploy_today.py
 ```
 
 ### 4. Schedule on Windows (Task Scheduler)
@@ -102,11 +102,11 @@ Action → Start a program:
 | Field | Value |
 |---|---|
 | Program | `C:\workspace\deep_learning_stock_trading\.venv\Scripts\python.exe` |
-| Arguments | `analysis/scripts/deploy_today.py` |
+| Arguments | `src/scripts/deploy_today.py` |
 | Start in | `C:\workspace\deep_learning_stock_trading` |
 
 Trigger: daily at **12:00**. Add a separate trigger at **16:00** running
-`analysis/scripts/scrape.py` to keep the cache current.
+`src/scripts/scrape.py` to keep the cache current.
 
 Skip weekends with the "Filter by days" condition (Monday-Friday only).
 
@@ -114,15 +114,15 @@ Skip weekends with the "Filter by days" condition (Monday-Friday only).
 
 ```cron
 # Scrape yesterday's bar at 16:00 weekdays
-0 16 * * 1-5  cd /path/to/deep_learning_stock_trading && .venv/bin/python analysis/scripts/scrape.py
+0 16 * * 1-5  cd /path/to/deep_learning_stock_trading && .venv/bin/python src/scripts/scrape.py
 
 # Trade at 12:00 weekdays
-0 12 * * 1-5  cd /path/to/deep_learning_stock_trading && TWSE_ACCOUNT=... TWSE_PASSWORD=... .venv/bin/python analysis/scripts/deploy_today.py
+0 12 * * 1-5  cd /path/to/deep_learning_stock_trading && TWSE_ACCOUNT=... TWSE_PASSWORD=... .venv/bin/python src/scripts/deploy_today.py
 ```
 
 ## What the script does (step by step)
 
-[analysis/scripts/deploy_today.py](../analysis/scripts/deploy_today.py)
+[src/scripts/deploy_today.py](../src/scripts/deploy_today.py)
 in 4 phases:
 
 ```
@@ -152,12 +152,12 @@ in 4 phases:
 [4/4] submit orders
        for SELL: Sell_Stock(account, password, code, lots, price)
        for BUY:  Buy_Stock(account, password, code, lots, price)
-       log every attempt to analysis/output/orders_YYYYMMDD.csv
+       log every attempt to src/output/orders_YYYYMMDD.csv
 ```
 
 ## Output
 
-`analysis/output/orders_YYYYMMDD.csv` accumulates one row per attempted
+`src/output/orders_YYYYMMDD.csv` accumulates one row per attempted
 order each run:
 
 | col | example |

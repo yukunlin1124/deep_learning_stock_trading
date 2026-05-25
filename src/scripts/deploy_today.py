@@ -3,9 +3,9 @@
 Schedule (typical):
    T-1 15:30-16:00  TWSE settlement window (course system updates bars)
    T-1 16:00 onward (or T 11:00)  scrape today's bar:
-                                      python analysis/scripts/scrape.py
+                                      python src/scripts/scrape.py
    T   12:00        run THIS script -- 1 hour before order window closes:
-                                      python analysis/scripts/deploy_today.py
+                                      python src/scripts/deploy_today.py
 
 Causal contract:
    - Features for prediction use bars through (T - 1)  (yesterday's close).
@@ -14,7 +14,7 @@ Causal contract:
      submit Buy_Stock / Sell_Stock at limit prices rounded from (T - 1) close.
    - TWSE will fill iff today's [low, high] covers the limit (project Rule 02).
 
-Trading config is loaded from analysis/output/bt_config.json so it stays
+Trading config is loaded from src/output/bt_config.json so it stays
 identical to whatever the backtest used.
 
 Credentials:
@@ -22,14 +22,14 @@ Credentials:
 
 Run:
    # Dry run (no orders submitted, just prints intended actions):
-   python analysis/scripts/deploy_today.py --dry-run
+   python src/scripts/deploy_today.py --dry-run
 
    # Live trading (will hit Buy_Stock / Sell_Stock):
    $env:TWSE_ACCOUNT="..."
    $env:TWSE_PASSWORD="..."
-   python analysis/scripts/deploy_today.py
+   python src/scripts/deploy_today.py
 
-Logs every intended/submitted order to analysis/output/orders_YYYYMMDD.csv.
+Logs every intended/submitted order to src/output/orders_YYYYMMDD.csv.
 """
 from __future__ import annotations
 
@@ -51,18 +51,18 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from analysis.data.io import fetch_range
-from analysis.data.handler import (
+from src.data.io import fetch_range
+from src.data.handler import (
     compute_alpha360, SEQ_LEN, N_FIELDS, LABEL_HORIZON,
 )
-from analysis.data.processor import apply_robust_zscore, fillna
-from analysis.model.double_adapt import DoubleAdapt
-from analysis.evaluate.trading_rules import (
+from src.data.processor import apply_robust_zscore, fillna
+from src.model.double_adapt import DoubleAdapt
+from src.evaluate.trading_rules import (
     SHARES_PER_LOT, round_buy, round_sell,
 )
 from stock_api import Buy_Stock, Sell_Stock, Get_User_Stocks
 
-OUT_BASE = PROJECT_ROOT / "analysis" / "output"
+OUT_BASE = PROJECT_ROOT / "src" / "output"
 HISTORY_START = "2024-01-01"   # ~2 years of bars is plenty for a 60-day window
 
 # Daily order log lives at output/ root (spans runs, not per-run).
@@ -88,7 +88,7 @@ def resolve_run_dir(run_override: str | None) -> Path:
 def load_artifacts(device: torch.device, run_dir: Path) -> tuple:
     model_path = run_dir / "final.pt"
     if not model_path.exists():
-        raise SystemExit(f"missing {model_path}. Run analysis/scripts/train.py first.")
+        raise SystemExit(f"missing {model_path}. Run src/scripts/train.py first.")
     model = DoubleAdapt(seq_len=SEQ_LEN, n_fields=N_FIELDS).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()

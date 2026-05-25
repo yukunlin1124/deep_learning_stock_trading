@@ -3,7 +3,7 @@ configs against the existing predictions.csv. Also slice per-period IC to
 see where the model has signal vs noise.
 
 Run:
-    .venv/Scripts/python.exe analysis/scripts/diagnose.py
+    .venv/Scripts/python.exe src/scripts/diagnose.py
 """
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from analysis.data.io import fetch_range
-from analysis.data.universe import get_candidate_pool
-from analysis.evaluate.backtest import BTConfig, run_backtest_from_predictions
-from analysis.evaluate.metrics import cross_sectional_ic
+from src.data.io import fetch_range
+from src.data.universe import get_candidate_pool
+from src.evaluate.backtest import BTConfig, run_backtest_from_predictions
+from src.evaluate.metrics import cross_sectional_ic
 
-OUT = PROJECT_ROOT / "analysis" / "output"
+OUT = PROJECT_ROOT / "src" / "output"
 
 
 def load_bars_for(codes: set[str]) -> dict[str, pd.DataFrame]:

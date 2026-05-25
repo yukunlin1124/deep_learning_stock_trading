@@ -3,7 +3,7 @@
 Each TWSE fetch sleeps 2s per month so we cache per (stock_code, year) CSV
 on disk and only hit the network for missing years.
 
-CACHE_DIR points at the project-level analysis/_cache regardless of where
+CACHE_DIR points at the project-level src/_cache regardless of where
 this module is imported from.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ import pandas as pd
 from stock_api import get_taiwan_stock_data
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CACHE_DIR = PROJECT_ROOT / "analysis" / "_cache"
+CACHE_DIR = PROJECT_ROOT / "src" / "_cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
 

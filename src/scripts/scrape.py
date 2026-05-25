@@ -11,10 +11,10 @@ import traceback
 from pathlib import Path
 from datetime import datetime
 
-# Allow running as `python analysis/scripts/scrape.py`.
+# Allow running as `python src/scripts/scrape.py`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from analysis.data.io import fetch_year, CACHE_DIR  # noqa: E402
-from analysis.data.universe import get_candidate_pool  # noqa: E402
+from src.data.io import fetch_year, CACHE_DIR  # noqa: E402
+from src.data.universe import get_candidate_pool  # noqa: E402
 
 START_YEAR = 2016
 END_YEAR = 2026

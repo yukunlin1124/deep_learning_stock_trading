@@ -49,7 +49,7 @@ See:
 # cache files (2016-2026) for 2330. Verifies the full workflow (data ->
 # panel -> pretrain -> IL -> backtest -> live forecast) wires together
 # correctly using the same fixed splits as the main pipeline.
-.venv/Scripts/python.exe analysis/test/test_pipeline_2330.py
+.venv/Scripts/python.exe src/test/test_pipeline_2330.py
 ```
 
 Single-stock test is **plumbing-only** — it cannot validate model quality
@@ -81,23 +81,23 @@ python -m venv .venv
 # 2. Install the course package as editable (after cloning per Prerequisites):
 .venv/Scripts/python.exe -m pip install -e ./stock_project_for_class
 
-# 2. Scrape TWSE bars into analysis/_cache (~5 hr fresh, resumable).
-.venv/Scripts/python.exe analysis/scripts/scrape.py
+# 2. Scrape TWSE bars into src/_cache (~5 hr fresh, resumable).
+.venv/Scripts/python.exe src/scripts/scrape.py
 
 # 3. Retry any (stock, year) pairs the main scrape failed or skipped.
-.venv/Scripts/python.exe analysis/scripts/retry.py
+.venv/Scripts/python.exe src/scripts/retry.py
 
-# 4. Pretrain + IL + backtest + live forecast. Artifacts -> analysis/output/.
-.venv/Scripts/python.exe analysis/scripts/train.py
+# 4. Pretrain + IL + backtest + live forecast. Artifacts -> src/output/.
+.venv/Scripts/python.exe src/scripts/train.py
 
 # 5. (Daily after train.py) auto-trade on the course virtual TWSE.
 #    Schedule this at 12:00 (1hr before the 13:00 order window closes):
 $env:TWSE_ACCOUNT="..."; $env:TWSE_PASSWORD="..."
-.venv/Scripts/python.exe analysis/scripts/deploy_today.py
+.venv/Scripts/python.exe src/scripts/deploy_today.py
 # Add --dry-run to preview orders without submitting.
 ```
 
-## Outputs (`analysis/output/`)
+## Outputs (`src/output/`)
 
 | File | What it is |
 |---|---|

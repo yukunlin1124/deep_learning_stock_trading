@@ -16,9 +16,9 @@ env/
 ENV/
 
 # Cached data + model output artifacts (regeneratable, large)
-analysis/_cache/
-analysis/output/
-analysis/test/output/
+src/_cache/
+src/output/
+src/test/output/
 
 # External reference clones — kept locally as untracked siblings of this repo.
 # See README "Prerequisites" for the clone URLs.
@@ -57,4 +57,4 @@ htmlcov/
 .env.local
 
 # Daily order logs (per-day timestamped)
-analysis/output/orders_*.csv
+src/output/orders_*.csv

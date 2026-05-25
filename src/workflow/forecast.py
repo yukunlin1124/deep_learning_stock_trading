@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from analysis.data.handler import PanelTensors
-from analysis.model.double_adapt import DoubleAdapt
+from src.data.handler import PanelTensors
+from src.model.double_adapt import DoubleAdapt
 
 
 def forecast_latest(

@@ -1,6 +1,6 @@
 # Selecting `top_k` and `n_drop`
 
-These two `BTConfig` fields ([analysis/evaluate/backtest.py](../analysis/evaluate/backtest.py))
+These two `BTConfig` fields ([src/evaluate/backtest.py](../src/evaluate/backtest.py))
 drive the entire trading policy. Picking them is more important than any
 model hyperparameter — get them wrong and the model's alpha is either
 diluted away (too high `top_k`) or eaten by costs (too high `n_drop`).
@@ -142,7 +142,7 @@ granularity (1000 shares) becomes coarse relative to slot size.
 
 ## Concrete recommendations for this project
 
-Active universe = **50 stocks** ([data/universe.py:24](../analysis/data/universe.py#L24)).
+Active universe = **50 stocks** ([data/universe.py:24](../src/data/universe.py#L24)).
 
 | Use case | `top_k` | `n_drop` | Rationale |
 |---|---|---|---|
@@ -155,7 +155,7 @@ Active universe = **50 stocks** ([data/universe.py:24](../analysis/data/universe
 | **Anti-pattern: don't do this** | 50 | 5 | top_k = universe → degenerate "long the index" |
 
 The **default `BTConfig(top_k=10, n_drop=None)`** in
-[analysis/evaluate/backtest.py:41-47](../analysis/evaluate/backtest.py#L41-L47)
+[src/evaluate/backtest.py:41-47](../src/evaluate/backtest.py#L41-L47)
 is a reasonable starting point: 20% selectivity (between CSI300 and
 CSI500), no turnover cap so the model fully expresses its rebalance
 intent. Switch to `n_drop=1` if you want to control daily costs.
@@ -163,7 +163,7 @@ intent. Switch to `n_drop=1` if you want to control daily costs.
 ## How to change
 
 Edit the `bt_cfg = BTConfig()` line in
-[analysis/scripts/train.py:170](../analysis/scripts/train.py#L170):
+[src/scripts/train.py:170](../src/scripts/train.py#L170):
 
 ```python
 # Default
@@ -191,8 +191,8 @@ Re-tune `top_k` / `n_drop` when:
 
 ## References
 
-- [analysis/evaluate/backtest.py](../analysis/evaluate/backtest.py) — `BTConfig`, `run_backtest_from_predictions`
-- [analysis/evaluate/trading_rules.py](../analysis/evaluate/trading_rules.py) — commission, tax, lot, tick rules
+- [src/evaluate/backtest.py](../src/evaluate/backtest.py) — `BTConfig`, `run_backtest_from_predictions`
+- [src/evaluate/trading_rules.py](../src/evaluate/trading_rules.py) — commission, tax, lot, tick rules
 - [stock_project_for_class/rules.md](../stock_project_for_class/rules.md) — TWSE trading-rules source of truth
 - qlib reference: [qlib/contrib/strategy/signal_strategy.py:75-128](../qlib/qlib/contrib/strategy/signal_strategy.py#L75-L128) — `TopkDropoutStrategy` class
 - qlib YAML conventions: any file under [qlib/examples/benchmarks/*/workflow_config_*.yaml](../qlib/examples/benchmarks/)

@@ -11,7 +11,7 @@ Pipeline:
   7. Portfolio backtest over the IL window using top-K limit-at-prev-close.
   8. Live forecast on the freshest 20 label-less dates.
 
-Artifacts -> analysis/models/.
+Artifacts -> src/models/.
 """
 from __future__ import annotations
 
@@ -26,30 +26,30 @@ import numpy as np
 import pandas as pd
 import torch
 
-# Allow running as `python analysis/scripts/train.py`.
+# Allow running as `python src/scripts/train.py`.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from analysis.data.io import fetch_range  # noqa: E402
-from analysis.data.universe import (  # noqa: E402
+from src.data.io import fetch_range  # noqa: E402
+from src.data.universe import (  # noqa: E402
     get_candidate_pool, build_universe_schedule, TOP_N as UNIVERSE_TOP_N,
 )
-from analysis.data.handler import (  # noqa: E402
+from src.data.handler import (  # noqa: E402
     build_panel, PanelTensors, LABEL_HORIZON, SEQ_LEN, N_FIELDS,
 )
-from analysis.data.processor import (  # noqa: E402
+from src.data.processor import (  # noqa: E402
     fit_robust_zscore, apply_robust_zscore, fillna,
 )
-from analysis.model.double_adapt import DoubleAdapt  # noqa: E402
-from analysis.trainer.maml import (  # noqa: E402
+from src.model.double_adapt import DoubleAdapt  # noqa: E402
+from src.trainer.maml import (  # noqa: E402
     FOMAMLConfig, PretrainConfig, pretrain_offline,
 )
-from analysis.trainer.incremental import ILConfig, run_incremental  # noqa: E402
-from analysis.evaluate.metrics import cross_sectional_ic  # noqa: E402
-from analysis.evaluate.backtest import BTConfig, run_backtest_from_predictions  # noqa: E402
-from analysis.workflow.forecast import forecast_latest  # noqa: E402
+from src.trainer.incremental import ILConfig, run_incremental  # noqa: E402
+from src.evaluate.metrics import cross_sectional_ic  # noqa: E402
+from src.evaluate.backtest import BTConfig, run_backtest_from_predictions  # noqa: E402
+from src.workflow.forecast import forecast_latest  # noqa: E402
 
-OUT_BASE = PROJECT_ROOT / "analysis" / "output"
+OUT_BASE = PROJECT_ROOT / "src" / "output"
 OUT_BASE.mkdir(exist_ok=True)
 
 

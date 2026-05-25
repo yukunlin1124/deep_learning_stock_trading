@@ -22,10 +22,10 @@ import torch
 import torch.nn.functional as F
 from torch.func import functional_call
 
-from analysis.data.handler import PanelTensors
-from analysis.data.processor import csrank_normalize_per_date
-from analysis.model.double_adapt import DoubleAdapt
-from analysis.evaluate.metrics import cross_sectional_ic
+from src.data.handler import PanelTensors
+from src.data.processor import csrank_normalize_per_date
+from src.model.double_adapt import DoubleAdapt
+from src.evaluate.metrics import cross_sectional_ic
 
 
 # ----------------- task sampling -----------------

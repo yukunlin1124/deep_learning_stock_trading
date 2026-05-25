@@ -83,7 +83,7 @@ but the cause is now well understood and actionable.**
 
 Final equity: NT$27.7M, down from NT$100M starting capital.
 
-## Diagnostic findings (from `analysis/scripts/diagnose.py`)
+## Diagnostic findings (from `src/scripts/diagnose.py`)
 
 ### 1. Pipeline plumbing is correct
 
@@ -206,8 +206,8 @@ the backtest.
 | **2.** `n_drop=1` | `BTConfig(n_drop=1)` | Halve cost drag to ~18% annualized |
 | **5.** `lr_psi=1e-3` (was 1e-2) | `FOMAMLConfig(lr_psi=1e-3)` | Slow DA drift, match MA learning rate |
 
-Run-1 artifacts preserved at `analysis/output/run1/` for comparison.
-Run 2 outputs land in `analysis/output/`.
+Run-1 artifacts preserved at `src/output/run1/` for comparison.
+Run 2 outputs land in `src/output/`.
 
 ## Lessons
 
@@ -228,11 +228,11 @@ Run 2 outputs land in `analysis/output/`.
 
 ## Files referenced
 
-- [analysis/scripts/train.py](../analysis/scripts/train.py) — orchestrator
-- [analysis/scripts/diagnose.py](../analysis/scripts/diagnose.py) — produced findings 1–5 above
-- [analysis/output/run1/](../analysis/output/run1/) — run-1 artifacts (preserved for comparison)
-- [analysis/output/pretrain_log.csv](../analysis/output/pretrain_log.csv) — per-epoch train loss + val IC
-- [analysis/output/il_log.csv](../analysis/output/il_log.csv) — per-step IL IC/RankIC
+- [src/scripts/train.py](../src/scripts/train.py) — orchestrator
+- [src/scripts/diagnose.py](../src/scripts/diagnose.py) — produced findings 1–5 above
+- [src/output/run1/](../src/output/run1/) — run-1 artifacts (preserved for comparison)
+- [src/output/pretrain_log.csv](../src/output/pretrain_log.csv) — per-epoch train loss + val IC
+- [src/output/il_log.csv](../src/output/il_log.csv) — per-step IL IC/RankIC
 - [docs/topk_ndrop_selection.md](topk_ndrop_selection.md) — cost-drag formulas
 
 ---
@@ -363,8 +363,8 @@ early period.
 
 ## Files referenced (run 2)
 
-- [analysis/output/run2/](../analysis/output/run2/) — run-2 artifacts (preserved)
-- [analysis/output/run1/](../analysis/output/run1/) — run-1 artifacts (preserved)
+- [src/output/run2/](../src/output/run2/) — run-2 artifacts (preserved)
+- [src/output/run1/](../src/output/run1/) — run-1 artifacts (preserved)
 - run-2 pretrain ran 3 epochs (5 max, patience=2 fired at epoch 3)
 - run-2 IL ran 28 steps (same as run 1, panel max didn't change)
 
@@ -504,9 +504,9 @@ Run 3 is **+56.58% with Sharpe 0.93** — that's a real strategy, but still:
 
 ## Files referenced (run 3)
 
-- [analysis/output/run3/](../analysis/output/run3/) — run-3 artifacts (preserved)
-- [analysis/output/run2/](../analysis/output/run2/) — run-2 artifacts (preserved)
-- [analysis/output/run1/](../analysis/output/run1/) — run-1 artifacts (preserved)
+- [src/output/run3/](../src/output/run3/) — run-3 artifacts (preserved)
+- [src/output/run2/](../src/output/run2/) — run-2 artifacts (preserved)
+- [src/output/run1/](../src/output/run1/) — run-1 artifacts (preserved)
 - Pretrain stopped at epoch 9 (30 max, patience=8 fired)
 - IL ran 28 steps (same as runs 1-2)
 - Train loss reached 0.27 — model is fitting hard but generalizing well
@@ -654,10 +654,10 @@ window. That tracks the observed +80 pp delta exactly.
 
 ## Files referenced (run 4)
 
-- [analysis/output/run4/](../analysis/output/run4/) — run-4 preserved
-- [analysis/output/run3/](../analysis/output/run3/) — run-3 preserved
-- [analysis/output/run2/](../analysis/output/run2/) — run-2 preserved
-- [analysis/output/run1/](../analysis/output/run1/) — run-1 preserved
+- [src/output/run4/](../src/output/run4/) — run-4 preserved
+- [src/output/run3/](../src/output/run3/) — run-3 preserved
+- [src/output/run2/](../src/output/run2/) — run-2 preserved
+- [src/output/run1/](../src/output/run1/) — run-1 preserved
 - Pretrain stopped at epoch 9 (30 max, patience=8 fired)
 - IL ran 52 steps total: 24 warmup (2022-2023) + 28 backtest-window (2024-now)
 - Final equity NT$236.8M, +136.78% over 2-year backtest window
@@ -787,11 +787,11 @@ the edge but with proportionally bigger risk.
 
 ## Files referenced (run 5)
 
-- [analysis/output/](../analysis/output/) — run-5 artifacts (current)
-- [analysis/output/run4/](../analysis/output/run4/) — run-4 preserved (NT$236.8M, Sharpe 1.27)
-- [analysis/output/run3/](../analysis/output/run3/) — run-3 preserved
-- [analysis/output/run2/](../analysis/output/run2/) — run-2 preserved
-- [analysis/output/run1/](../analysis/output/run1/) — run-1 preserved
+- [src/output/](../src/output/) — run-5 artifacts (current)
+- [src/output/run4/](../src/output/run4/) — run-4 preserved (NT$236.8M, Sharpe 1.27)
+- [src/output/run3/](../src/output/run3/) — run-3 preserved
+- [src/output/run2/](../src/output/run2/) — run-2 preserved
+- [src/output/run1/](../src/output/run1/) — run-1 preserved
 - Pretrain stopped at epoch 9
 - IL ran 52 steps: 24 warmup (2022-2023) + 28 backtest-window (2024-now)
 - Final equity NT$176.2M, +76.16% over 2-year backtest window

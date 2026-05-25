@@ -128,7 +128,7 @@ def build_panel(bars: dict[str, pd.DataFrame],
 
 
 if __name__ == "__main__":
-    from analysis.data.io import fetch_range
+    from src.data.io import fetch_range
     df = fetch_range("1101", "2021-01-01", "2023-12-31")
     feat = compute_alpha360(df)
     print(f"feature rows: {len(feat)}")

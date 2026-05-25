@@ -1,6 +1,6 @@
 """End-to-end pipeline integration test on stock 2330 (TSMC) only.
 
-Mirrors analysis/scripts/train.py EXACTLY -- same fixed date splits:
+Mirrors src/scripts/train.py EXACTLY -- same fixed date splits:
   - Pretrain: 2016-01-01 -> 2021-12-31
   - Validate: 2022-01-01 -> 2023-12-31
   - Online IL + backtest: 2024-01-01 -> panel max
@@ -23,12 +23,12 @@ So THIS TEST VERIFIES PLUMBING, NOT MODEL QUALITY. It catches:
   * artifact-writing bugs
 
 For a real signal-quality test, run the full pipeline on the 50-stock
-universe via `python analysis/scripts/train.py`.
+universe via `python src/scripts/train.py`.
 
-Outputs are written to analysis/test/output/ so they don't clobber analysis/output/.
+Outputs are written to src/test/output/ so they don't clobber src/output/.
 
 Run:
-    .venv/Scripts/python.exe analysis/test/test_pipeline_2330.py
+    .venv/Scripts/python.exe src/test/test_pipeline_2330.py
 """
 from __future__ import annotations
 
@@ -44,27 +44,27 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from analysis.data.io import fetch_range, CACHE_DIR
-from analysis.data.handler import (
+from src.data.io import fetch_range, CACHE_DIR
+from src.data.handler import (
     build_panel, PanelTensors, SEQ_LEN, N_FIELDS, LABEL_HORIZON,
 )
-from analysis.data.processor import (
+from src.data.processor import (
     fit_robust_zscore, apply_robust_zscore, fillna,
 )
-from analysis.model.double_adapt import DoubleAdapt
-from analysis.trainer.maml import (
+from src.model.double_adapt import DoubleAdapt
+from src.trainer.maml import (
     FOMAMLConfig, PretrainConfig, pretrain_offline,
 )
-from analysis.trainer.incremental import ILConfig, run_incremental
-from analysis.evaluate.metrics import cross_sectional_ic
-from analysis.evaluate.backtest import BTConfig, run_backtest_from_predictions
-from analysis.workflow.forecast import forecast_latest
+from src.trainer.incremental import ILConfig, run_incremental
+from src.evaluate.metrics import cross_sectional_ic
+from src.evaluate.backtest import BTConfig, run_backtest_from_predictions
+from src.workflow.forecast import forecast_latest
 
 TEST_STOCK = "2330"
-OUT_DIR = PROJECT_ROOT / "analysis" / "test" / "output"
+OUT_DIR = PROJECT_ROOT / "src" / "test" / "output"
 OUT_DIR.mkdir(exist_ok=True)
 
-# Fixed date splits — match analysis/scripts/train.py exactly.
+# Fixed date splits — match src/scripts/train.py exactly.
 HISTORY_START = "2016-01-01"
 HISTORY_END = "2026-05-23"
 PRETRAIN_START = "2016-01-01"
@@ -94,7 +94,7 @@ def require_full_cache(code: str) -> None:
         print(f"\n*** SKIP: {code} cache is incomplete ***")
         print(f"have: {sorted(have)}")
         print(f"missing: {missing}")
-        print("Wait for the scrape (analysis/scripts/scrape.py) to finish "
+        print("Wait for the scrape (src/scripts/scrape.py) to finish "
               f"all 11 years for {code}, then rerun this test.")
         raise SystemExit(0)
 
@@ -142,7 +142,7 @@ def main() -> None:
           f"{pd.Timestamp(panel.dates.min()).date()} -> "
           f"{pd.Timestamp(panel.dates.max()).date()}")
 
-    # ---- 3. Fixed date splits (match analysis/scripts/train.py) ----
+    # ---- 3. Fixed date splits (match src/scripts/train.py) ----
     pretrain_start = pd.Timestamp(PRETRAIN_START)
     pretrain_end = pd.Timestamp(PRETRAIN_END)
     val_start = pd.Timestamp(VAL_START)
