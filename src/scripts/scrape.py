@@ -19,7 +19,9 @@ from src.data.universe import get_candidate_pool  # noqa: E402
 START_YEAR = 2016
 END_YEAR = 2026
 
-LOG = CACHE_DIR / "scrape.log"
+LOGS_DIR = CACHE_DIR.parent / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+LOG = LOGS_DIR / "scrape.log"
 
 
 def log(msg: str) -> None:

@@ -152,12 +152,14 @@ in 4 phases:
 [4/4] submit orders
        for SELL: Sell_Stock(account, password, code, lots, price)
        for BUY:  Buy_Stock(account, password, code, lots, price)
-       log every attempt to src/output/orders_YYYYMMDD.csv
+       log every attempt to src/output/run{N}/orders_YYYYMMDD.csv
+       log every top-10 inference snapshot to src/output/run{N}/inferences_YYYYMMDD.csv
+       tee full stdout to src/logs/deploy_YYYYMMDD.log
 ```
 
 ## Output
 
-`src/output/orders_YYYYMMDD.csv` accumulates one row per attempted
+`src/output/run{N}/orders_YYYYMMDD.csv` accumulates one row per attempted
 order each run:
 
 | col | example |

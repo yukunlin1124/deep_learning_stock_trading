@@ -98,9 +98,19 @@ analysis/
 
 | File | What it does |
 |---|---|
-| `scrape.py` | Iterates `get_candidate_pool() × range(2016, 2027)` and calls `fetch_year` for each. Logs progress to `_cache/scrape.log`. Resumable. |
-| `retry.py` | Parses `scrape.log` for `FAIL` lines + scans for missing cache files; retries each pair once. Logs to `_cache/retry.log`. |
-| `train.py` | The orchestrator. Loads bars → builds panel → applies universe schedule → fits feature norm → pretrain → IL → backtest → live forecast. Writes all artifacts to `src/models/`. |
+| `scrape.py` | Iterates `get_candidate_pool() × range(2016, 2027)` and calls `fetch_year` for each. Logs progress to `src/logs/scrape.log`. Resumable. |
+| `retry.py` | Parses `scrape.log` for `FAIL` lines + scans for missing cache files; retries each pair once. Logs to `src/logs/retry.log`. |
+| `train.py` | The orchestrator. Loads bars → builds panel → applies universe schedule → fits feature norm → pretrain → IL → backtest → live forecast. Writes all artifacts to `src/output/run{N}/`. Tees full stdout/stderr to `src/logs/train_run{N}_YYYYMMDD_HHMMSS.log`. |
+| `deploy_today.py` | Daily inference + order submission. Logs orders to `src/output/run{N}/orders_YYYYMMDD.csv`, inferences to `inferences_YYYYMMDD.csv`, and tees full stdout to `src/logs/deploy_YYYYMMDD.log` (appended across multiple calls per day). |
+
+### `src/logs/` — session logs (gitignored)
+
+| File | Contents |
+|---|---|
+| `scrape.log` | Append-mode log of every `scrape.py` invocation: per-stock/year fetch progress, ETA, FAIL lines |
+| `retry.log` | Per-pair retry attempt log from `retry.py` |
+| `train_run{N}_YYYYMMDD_HHMMSS.log` | Per-run full training session capture (every print from train.py) |
+| `deploy_YYYYMMDD.log` | Append-mode daily deploy session log (every invocation of `deploy_today.py`) |
 
 ### `src/output/` — training artifacts
 

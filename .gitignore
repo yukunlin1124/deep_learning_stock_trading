@@ -15,10 +15,11 @@ venv/
 env/
 ENV/
 
-# Cached data + model output artifacts (regeneratable, large)
+# Cached data + model output artifacts + session logs (regeneratable, large)
 src/_cache/
 src/output/
 src/test/output/
+src/logs/
 
 # External reference clones — kept locally as untracked siblings of this repo.
 # See README "Prerequisites" for the clone URLs.

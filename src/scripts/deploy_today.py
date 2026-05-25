@@ -63,10 +63,23 @@ from src.evaluate.trading_rules import (
 from stock_api import Buy_Stock, Sell_Stock, Get_User_Stocks
 
 OUT_BASE = PROJECT_ROOT / "src" / "output"
+LOGS_DIR = PROJECT_ROOT / "src" / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
 HISTORY_START = "2024-01-01"   # ~2 years of bars is plenty for a 60-day window
+TOP_N_LOG = 10                 # how many top predictions to log per inference
 
-# Daily order log lives at output/ root (spans runs, not per-run).
-LOG_PATH = OUT_BASE / f"orders_{datetime.now().strftime('%Y%m%d')}.csv"
+
+class _Tee:
+    """Write stdout to BOTH terminal and a log file."""
+    def __init__(self, stream, log_file):
+        self.stream = stream
+        self.log_file = log_file
+    def write(self, data):
+        self.stream.write(data)
+        self.log_file.write(data)
+    def flush(self):
+        self.stream.flush()
+        self.log_file.flush()
 
 
 def resolve_run_dir(run_override: str | None) -> Path:
@@ -242,6 +255,33 @@ def plan_orders(
     return orders
 
 
+# ----------------- inference logging -----------------
+
+def log_top_inference(preds_df: pd.DataFrame, run_dir: Path,
+                      cost_alpha_bps: float, top_n: int = TOP_N_LOG) -> Path:
+    """Append a snapshot of the top-N predictions (rank ordered) to
+    run_dir/inferences_YYYYMMDD.csv. One block per inference call so we
+    can see how predictions evolve day-to-day for a given model.
+
+    Columns: attempted_at, rank, code, pred, prev_close, above_threshold
+    """
+    log_path = run_dir / f"inferences_{datetime.now().strftime('%Y%m%d')}.csv"
+    ranked = preds_df.sort_values("pred", ascending=False).head(top_n).copy()
+    ranked.insert(0, "rank", range(1, len(ranked) + 1))
+    ranked.insert(0, "attempted_at", datetime.now().isoformat(timespec="seconds"))
+    ranked["above_threshold"] = ranked["pred"] >= (cost_alpha_bps / 1e4)
+    ranked["pred"] = ranked["pred"].round(5)
+    ranked["prev_close"] = ranked["prev_close"].round(2)
+    ranked["asof"] = ranked["asof"].apply(lambda d: pd.Timestamp(d).date())
+    ranked = ranked[["attempted_at", "asof", "rank", "code", "pred",
+                     "prev_close", "above_threshold"]]
+    if log_path.exists():
+        existing = pd.read_csv(log_path)
+        ranked = pd.concat([existing, ranked], ignore_index=True)
+    ranked.to_csv(log_path, index=False)
+    return log_path
+
+
 # ----------------- submission + logging -----------------
 
 def submit_orders(orders: list[IntendedOrder], account: str, password: str,
@@ -291,9 +331,18 @@ def main() -> None:
         raise SystemExit("missing credentials. Set TWSE_ACCOUNT + TWSE_PASSWORD "
                          "env vars, or pass --account/--password, or use --dry-run.")
 
+    # Tee stdout/stderr to a daily deploy log (one file per calendar day, appended).
+    deploy_log_path = LOGS_DIR / f"deploy_{datetime.now().strftime('%Y%m%d')}.log"
+    deploy_log_file = open(deploy_log_path, "a", encoding="utf-8", buffering=1)
+    deploy_log_file.write(f"\n===== {datetime.now().isoformat(timespec='seconds')} "
+                          f"dry_run={args.dry_run} =====\n")
+    sys.stdout = _Tee(sys.__stdout__, deploy_log_file)
+    sys.stderr = _Tee(sys.__stderr__, deploy_log_file)
+
     t0 = time.monotonic()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}, dry_run={args.dry_run}")
+    print(f"logging session to {deploy_log_path}")
 
     print(f"\n[1/4] loading artifacts from {run_dir.name}/ (model, norm stats, universe, bt_config)...")
     model, norm_stats, universe, bt_cfg = load_artifacts(device, run_dir)
@@ -308,6 +357,12 @@ def main() -> None:
     print(f"      asof (= 'yesterday' = lag-0): {pd.Timestamp(asof).date()}, "
           f"got predictions for {len(preds)} stocks")
     print(f"      top 5: {preds.head(5)[['code','pred','prev_close']].to_string(index=False)}")
+
+    # Log top-N predictions for every inference (regardless of dry-run / live).
+    inference_path = log_top_inference(
+        preds, run_dir, float(bt_cfg.get("cost_alpha_bps", 70.0)), top_n=TOP_N_LOG
+    )
+    print(f"      logged top {TOP_N_LOG} predictions to {inference_path.name}")
 
     print("\n[3/4] reading current holdings + planning orders...")
     if args.dry_run and not args.account:
@@ -328,12 +383,14 @@ def main() -> None:
     print("\n[4/4] submitting orders...")
     log_rows = submit_orders(orders, args.account, args.password, args.dry_run)
 
+    # Order log goes into run_dir/ so each model's full activity is co-located.
+    orders_log_path = run_dir / f"orders_{datetime.now().strftime('%Y%m%d')}.csv"
     if log_rows:
         log_df = pd.DataFrame(log_rows)
-        if LOG_PATH.exists():
-            log_df = pd.concat([pd.read_csv(LOG_PATH), log_df], ignore_index=True)
-        log_df.to_csv(LOG_PATH, index=False)
-        print(f"\nlogged {len(log_rows)} order(s) to {LOG_PATH}")
+        if orders_log_path.exists():
+            log_df = pd.concat([pd.read_csv(orders_log_path), log_df], ignore_index=True)
+        log_df.to_csv(orders_log_path, index=False)
+        print(f"\nlogged {len(log_rows)} order(s) to {orders_log_path}")
     else:
         print("\nno orders to log.")
 

@@ -51,6 +51,8 @@ from src.workflow.forecast import forecast_latest  # noqa: E402
 
 OUT_BASE = PROJECT_ROOT / "src" / "output"
 OUT_BASE.mkdir(exist_ok=True)
+LOGS_DIR = PROJECT_ROOT / "src" / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
 
 
 def _next_run_dir(base: Path) -> Path:
@@ -68,6 +70,28 @@ OUT_DIR.mkdir()
 # Update the CURRENT pointer so deploy_today.py picks up this run by default.
 (OUT_BASE / "CURRENT").write_text(OUT_DIR.name)
 print(f"writing artifacts to {OUT_DIR}")
+
+
+class _Tee:
+    """Write stdout to BOTH terminal and a log file."""
+    def __init__(self, stream, log_file):
+        self.stream = stream
+        self.log_file = log_file
+    def write(self, data):
+        self.stream.write(data)
+        self.log_file.write(data)
+    def flush(self):
+        self.stream.flush()
+        self.log_file.flush()
+
+
+# Tee stdout to a per-run training log (full session capture).
+import time as _time  # avoid shadowing time used later
+_log_path = LOGS_DIR / f"train_{OUT_DIR.name}_{_time.strftime('%Y%m%d_%H%M%S')}.log"
+_log_file = open(_log_path, "w", encoding="utf-8", buffering=1)
+sys.stdout = _Tee(sys.__stdout__, _log_file)
+sys.stderr = _Tee(sys.__stderr__, _log_file)
+print(f"logging full training session to {_log_path}")
 
 # Date windows
 HISTORY_START = "2016-01-01"
