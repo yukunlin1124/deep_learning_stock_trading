@@ -32,8 +32,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.io import fetch_range  # noqa: E402
 from src.data.universe import (  # noqa: E402
-    get_candidate_pool, build_universe_schedule, TOP_N as UNIVERSE_TOP_N,
+    get_index_universe_codes, build_universe_schedule,
 )
+
+# Which TEJ index to train on. Override per-run by setting --universe on the
+# CLI (parsed in main()) — this default is used by both __main__ and the
+# bookkeeping fields written to report.json.
+DEFAULT_UNIVERSE = "TW50"
 from src.data.handler import (  # noqa: E402
     build_panel, PanelTensors, LABEL_HORIZON, SEQ_LEN, N_FIELDS,
 )
@@ -48,7 +53,7 @@ from src.trainer.incremental import ILConfig, run_incremental  # noqa: E402
 from src.evaluate.metrics import cross_sectional_ic  # noqa: E402
 from src.evaluate.backtest_qlib import (  # noqa: E402
     QlibBTConfig as BTConfig,
-    run_qlib_backtest_from_predictions as run_backtest_from_predictions,
+    run_qlib_backtest_with_il,
 )
 from src.workflow.forecast import forecast_latest  # noqa: E402
 
@@ -59,20 +64,19 @@ LOGS_DIR.mkdir(exist_ok=True)
 
 
 def _next_run_dir(base: Path) -> Path:
-    """Find next available output/runN/. Auto-increments across re-runs."""
+    """Find next available output/runN/. Auto-increments across re-runs.
+
+    Skips empty `runN/` directories so test-imports / killed runs don't
+    create permanent gaps in the numbering.
+    """
     nums = []
     for p in base.iterdir():
         if p.is_dir() and p.name.startswith("run") and p.name[3:].isdigit():
-            nums.append(int(p.name[3:]))
+            # Treat empty dirs as never-existed so we reuse the slot
+            if any(p.iterdir()):
+                nums.append(int(p.name[3:]))
     next_n = (max(nums) + 1) if nums else 1
     return base / f"run{next_n}"
-
-
-OUT_DIR = _next_run_dir(OUT_BASE)
-OUT_DIR.mkdir()
-# Update the CURRENT pointer so deploy_today.py picks up this run by default.
-(OUT_BASE / "CURRENT").write_text(OUT_DIR.name)
-print(f"writing artifacts to {OUT_DIR}")
 
 
 class _Tee:
@@ -88,13 +92,28 @@ class _Tee:
         self.log_file.flush()
 
 
-# Tee stdout to a per-run training log (full session capture).
-import time as _time  # avoid shadowing time used later
-_log_path = LOGS_DIR / f"train_{OUT_DIR.name}_{_time.strftime('%Y%m%d_%H%M%S')}.log"
-_log_file = open(_log_path, "w", encoding="utf-8", buffering=1)
-sys.stdout = _Tee(sys.__stdout__, _log_file)
-sys.stderr = _Tee(sys.__stderr__, _log_file)
-print(f"logging full training session to {_log_path}")
+def _init_run_output(base: Path) -> Path:
+    """Allocate the next run dir, point CURRENT at it, tee stdout to its log.
+
+    Called only from main() so importing train.py doesn't allocate a run.
+    """
+    out_dir = _next_run_dir(base)
+    out_dir.mkdir(exist_ok=True)
+    (base / "CURRENT").write_text(out_dir.name)
+    print(f"writing artifacts to {out_dir}")
+    import time as _time
+    log_path = LOGS_DIR / f"train_{out_dir.name}_{_time.strftime('%Y%m%d_%H%M%S')}.log"
+    log_file = open(log_path, "w", encoding="utf-8", buffering=1)
+    sys.stdout = _Tee(sys.__stdout__, log_file)
+    sys.stderr = _Tee(sys.__stderr__, log_file)
+    print(f"logging full training session to {log_path}")
+    return out_dir
+
+
+# OUT_DIR is set inside main() at runtime; default to OUT_BASE so module-level
+# imports don't create directories. References later in the file pick it up
+# via the global rebinding in main().
+OUT_DIR = OUT_BASE
 
 # Date windows
 HISTORY_START = "2016-01-01"
@@ -115,9 +134,11 @@ IL_END = "auto"
 BACKTEST_START = "2024-01-01"    # backtest reports only on 2024+ (post-warmup)
 
 
-def load_bars() -> dict[str, pd.DataFrame]:
+def load_bars(universe: str) -> dict[str, pd.DataFrame]:
     bars: dict[str, pd.DataFrame] = {}
-    for code in get_candidate_pool():
+    codes = get_index_universe_codes(universe)
+    print(f"loading bars for {universe} universe ({len(codes)} codes)...")
+    for code in codes:
         try:
             df = fetch_range(code, HISTORY_START, HISTORY_END)
         except Exception as e:
@@ -152,16 +173,26 @@ def apply_time_varying_universe(panel: PanelTensors, schedule: pd.DataFrame
 
 
 def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--universe", choices=["TW50", "TM100"], default=DEFAULT_UNIVERSE,
+                    help="which TEJ index to use as the time-varying active universe")
+    args = ap.parse_args()
+    universe_name = args.universe
+
+    global OUT_DIR
+    OUT_DIR = _init_run_output(OUT_BASE)
     t0 = time.monotonic()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
     if device.type == "cuda":
         print(f"gpu: {torch.cuda.get_device_name(0)} "
               f"capability={torch.cuda.get_device_capability(0)}")
+    print(f"universe: {universe_name}")
     torch.manual_seed(0)
     np.random.seed(0)
 
-    bars = load_bars()
+    bars = load_bars(universe_name)
     if len(bars) < 5:
         print("WARNING: very few stocks loaded. Cache likely incomplete.")
 
@@ -170,11 +201,12 @@ def main() -> None:
           f"dates: {pd.Timestamp(panel.dates.min()).date()} -> "
           f"{pd.Timestamp(panel.dates.max()).date()}")
 
-    schedule = build_universe_schedule(bars, HISTORY_START, HISTORY_END,
-                                       top_n=UNIVERSE_TOP_N)
+    # Time-varying mask from the chosen TEJ index (monthly snapshots).
+    schedule = build_universe_schedule(universe_name, HISTORY_START, HISTORY_END)
     schedule.to_csv(OUT_DIR / "universe_schedule.csv", index=False)
+    typical_size = int(schedule["n_active"].iloc[-1]) if not schedule.empty else 0
     print(f"universe schedule: {len(schedule)} rebalances, "
-          f"top {UNIVERSE_TOP_N} per period")
+          f"~{typical_size} active per period ({universe_name})")
     panel = apply_time_varying_universe(panel, schedule)
     print(f"after universe mask: {len(panel):,} rows")
 
@@ -210,8 +242,8 @@ def main() -> None:
     pcfg = PretrainConfig(epochs=30, tasks_per_epoch=1000, early_stop_patience=8)
     il_end_actual = (str(pd.Timestamp(panel.dates.max()).date())
                      if IL_END == "auto" else IL_END)
-    print(f"IL window: {IL_START} -> {il_end_actual}")
-    icfg = ILConfig(start_date=IL_START, end_date=il_end_actual)
+    print(f"IL plan: warmup {IL_START} → {BACKTEST_START}, then live-IL backtest "
+          f"{BACKTEST_START} → {il_end_actual}")
 
     print("\n=== offline FOMAML pretrain ===")
     pre_res = pretrain_offline(model, pre_train, pre_val, fcfg, pcfg, device)
@@ -219,36 +251,42 @@ def main() -> None:
     pd.DataFrame(pre_res["history"]).to_csv(OUT_DIR / "pretrain_log.csv", index=False)
     print(f"saved pretrained.pt; best val IC = {pre_res['best_val_ic']:.4f}")
 
-    print("\n=== fake-online incremental learning ===")
-    step_log, preds = run_incremental(model, il_panel, fcfg, icfg, device)
-    torch.save(model.state_dict(), OUT_DIR / "final.pt")
-    step_log.to_csv(OUT_DIR / "il_log.csv", index=False)
-    preds.to_csv(OUT_DIR / "predictions.csv", index=False)
-    print(f"saved final.pt and IL logs")
+    # ---- Stage 2': IL warmup (2022-01 → BACKTEST_START) ----
+    # Walks the pretrained checkpoint forward through the val window doing
+    # per-20-day FOMAML adapts, producing the "after final preparation" model.
+    print(f"\n=== IL warmup ({IL_START} → {BACKTEST_START}) — final preparation ===")
+    warmup_cfg = ILConfig(start_date=IL_START, end_date=BACKTEST_START)
+    warmup_log, warmup_preds = run_incremental(model, il_panel, fcfg, warmup_cfg, device)
+    torch.save(model.state_dict(), OUT_DIR / "final_prep.pt")
+    warmup_log.to_csv(OUT_DIR / "warmup_log.csv", index=False)
+    print(f"saved final_prep.pt; warmup did {len(warmup_log)} IL steps")
 
-    # qlib backtest: top_k=10 (our 50-stock universe), n_drop=1 (10% turnover),
-    # cost_alpha_bps=70 (filter clearly bearish picks), costs="twse" (apples to
-    # the live deploy), deal_price="close" (qlib default, look-ahead but matches
-    # the example in stock_project_for_class/backtest_package).
+    # Persist trading config + active universe before the live-IL backtest.
     bt_cfg = BTConfig(top_k=10, n_drop=1, cost_alpha_bps=70.0,
                       costs="twse", deal_price="close")
-    # Slice predictions to the backtest reporting window (2022-2023 is warmup).
-    preds_for_backtest = preds[pd.to_datetime(preds["date"]) >= pd.Timestamp(BACKTEST_START)].copy()
-    print(f"backtest window: {BACKTEST_START} -> {il_end_actual} "
-          f"({len(preds_for_backtest):,} of {len(preds):,} preds; "
-          f"warmup pre-{BACKTEST_START} excluded)")
-    # Persist for deploy_today.py (it uses the SAME trading config as the backtest).
     (OUT_DIR / "bt_config.json").write_text(json.dumps(asdict(bt_cfg), indent=2))
-    # Persist the final active universe so deploy_today.py knows what to score.
     final_universe = [str(c) for c in schedule.iloc[-1]["codes"]] if len(schedule) else list(bars.keys())
     (OUT_DIR / "active_universe.json").write_text(
         json.dumps({"asof": str(schedule.iloc[-1]["asof"]) if len(schedule) else None,
                     "codes": final_universe}, indent=2))
-    bt = run_backtest_from_predictions(preds_for_backtest, bars, bt_cfg)
+
+    # ---- Stage 3: live-IL backtest (BACKTEST_START → now) ----
+    # Starts from final_prep.pt; walks forward in r=20-day windows; at each
+    # step does fomaml_step (adapts model in-place) AND simulates portfolio
+    # trades over the query window. Final model state -> final.pt.
+    print(f"\n=== live-IL qlib backtest ({BACKTEST_START} → {il_end_actual}) ===")
+    bt, step_log, preds = run_qlib_backtest_with_il(
+        model, il_panel, bars, fcfg, bt_cfg,
+        start_date=BACKTEST_START, end_date=il_end_actual, device=device,
+    )
+    torch.save(model.state_dict(), OUT_DIR / "final.pt")
+    step_log.to_csv(OUT_DIR / "il_log.csv", index=False)
+    preds.to_csv(OUT_DIR / "predictions.csv", index=False)
     bt.equity.to_csv(OUT_DIR / "equity.csv", index=False)
     bt.trades.to_csv(OUT_DIR / "trades.csv", index=False)
     bt.daily.to_csv(OUT_DIR / "backtest_daily.csv", index=False)
-    print(f"backtest: {bt.summary['days']} days, {bt.summary['n_trades']} trades, "
+    print(f"saved final.pt; live-IL backtest: "
+          f"{bt.summary['days']} days, {bt.summary['n_trades']} trades, "
           f"final equity={bt.summary['final_equity']:.0f}, "
           f"cum_ret={bt.summary['cum_return']:.4f}, "
           f"sharpe={bt.summary['sharpe']:.3f}, "
@@ -275,8 +313,9 @@ def main() -> None:
         "il_window": [IL_START, il_end_actual],
         "il_warmup": [IL_START, BACKTEST_START],
         "backtest_window": [BACKTEST_START, il_end_actual],
+        "universe": universe_name,
         "n_candidate_pool": len(bars),
-        "n_active_per_period": int(UNIVERSE_TOP_N),
+        "n_active_per_period": typical_size,
         "rebalances_per_year": 2,
         "n_rebalances": int(len(schedule)),
         "n_panel_rows": int(len(panel)),
@@ -284,7 +323,8 @@ def main() -> None:
         "n_il_rows": int(len(il_panel)),
         "pretrain_best_val_ic": float(pre_res["best_val_ic"]),
         "pretrain_epochs_run": len(pre_res["history"]),
-        "il_n_steps": int(len(step_log)),
+        "il_warmup_n_steps": int(len(warmup_log)),
+        "il_online_n_steps": int(len(step_log)),
         "il_mean_ic": float(step_log["ic"].mean()) if len(step_log) else float("nan"),
         "il_mean_ric": float(step_log["ric"].mean()) if len(step_log) else float("nan"),
         "il_overall_ic": ic_all,
@@ -298,10 +338,11 @@ def main() -> None:
             "seq_len": SEQ_LEN, "n_fields": N_FIELDS, "label_horizon": LABEL_HORIZON,
             "fomaml": asdict(fcfg),
             "pretrain": asdict(pcfg),
-            "il": asdict(icfg),
+            "il_warmup": asdict(warmup_cfg),
+            "il_online_start": BACKTEST_START,
         },
         "trained_at": pd.Timestamp.now().isoformat(),
-        "universe": list(bars.keys()),
+        "universe_codes": list(bars.keys()),
         "wall_time_min": (time.monotonic() - t0) / 60.0,
     }
     (OUT_DIR / "report.json").write_text(json.dumps(report, indent=2, default=str))

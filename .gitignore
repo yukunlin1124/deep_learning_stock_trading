@@ -21,6 +21,9 @@ src/output/
 src/test/output/
 src/logs/
 
+# Raw TEJ exports (~640 MB; user supplies these locally per docs/project_structure.md)
+src/data/stock_data_all/
+
 # External reference clones — kept locally as untracked siblings of this repo.
 # See README "Prerequisites" for the clone URLs.
 qlib/

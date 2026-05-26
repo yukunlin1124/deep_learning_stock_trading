@@ -282,3 +282,236 @@ def run_qlib_backtest_from_predictions(
     summary = _equity_summary(eq, cfg.capital, trades_df)
     return BTResult(equity=eq, trades=trades_df, daily=pd.DataFrame(daily_rows),
                     summary=summary)
+
+
+# ---------- Live-IL backtest: model fine-tunes every r days during the run ----------
+
+def run_qlib_backtest_with_il(
+    model,                              # DoubleAdapt; mutated in-place by FOMAML steps
+    il_panel,                           # PanelTensors covering [start_date - 90d, end_date]
+    bars: dict[str, pd.DataFrame],
+    fcfg,                               # FOMAMLConfig (inner_lr, lr_phi, lr_psi, r, etc.)
+    cfg: QlibBTConfig | None = None,
+    start_date: str = "2024-01-01",
+    end_date: str | None = None,
+    device=None,
+    log_fn=print,
+) -> tuple[BTResult, pd.DataFrame, pd.DataFrame]:
+    """Walk il_panel forward in r-day windows. Each window:
+      1. Build (support, query) task; do one FOMAML bi-level update on support;
+         get predictions for the query days.
+      2. For each day in the query window: take top-K from those predictions,
+         simulate sells/buys/mark-to-close (same rules as
+         `run_qlib_backtest_from_predictions`).
+
+    This is the "live IL during backtest" mode — the model state at trade time
+    on day D reflects everything it has adapted through D - 20. Reproduces
+    deploy-style behavior more faithfully than the replay-from-predictions path.
+
+    Returns:
+      (BTResult, step_log_df, predictions_df)
+        step_log_df: per-IL-step IC/RankIC/loss (same shape as run_incremental)
+        predictions_df: per-(date, stock) pred/actual (same shape as predictions.csv)
+    """
+    import torch
+    from src.trainer.maml import panel_to_task, fomaml_step
+    from src.evaluate.metrics import cross_sectional_ic
+
+    cfg = cfg or QlibBTConfig()
+    costs = _COST_TABLES[cfg.costs]
+    open_cost, close_cost, min_cost = costs["open_cost"], costs["close_cost"], costs["min_cost"]
+    thresh = cfg.cost_alpha_bps / 1e4
+
+    # Optimizers — adapt model state in-place during the backtest
+    optim_phi = torch.optim.Adam(model.ma_parameters(), lr=fcfg.lr_phi,
+                                 weight_decay=fcfg.weight_decay)
+    optim_psi = torch.optim.Adam(model.da_parameters(), lr=fcfg.lr_psi,
+                                 weight_decay=fcfg.weight_decay)
+
+    # Price series for portfolio sim
+    closes = {c: bars[c].set_index("date")["close"]
+              for c in bars if "date" in bars[c].columns}
+    opens = {c: bars[c].set_index("date")["open"] for c in closes}
+    highs = {c: bars[c].set_index("date")["high"] for c in closes}
+    lows = {c: bars[c].set_index("date")["low"] for c in closes}
+    prev_close = {c: closes[c].shift(1) for c in closes}
+    deal_series = closes if cfg.deal_price == "close" else opens
+
+    # Portfolio state
+    cash = cfg.capital
+    positions: dict[str, float] = {}
+    entry: dict[str, dict] = {}
+    trades: list[dict] = []
+    equity_rows: list[tuple] = []
+    daily_rows: list[dict] = []
+
+    # IL walk
+    udates = np.unique(il_panel.dates)
+    start = np.datetime64(pd.Timestamp(start_date))
+    end = (np.datetime64(pd.Timestamp(end_date))
+           if end_date else udates[-1])
+    qry_first_idx = max(int(np.searchsorted(udates, start, side="left")), fcfg.r)
+
+    step_log_rows = []
+    pred_rows = []
+    i = qry_first_idx
+    step = 0
+    while i + fcfg.r <= len(udates):
+        if udates[i] > end:
+            break
+        task = panel_to_task(il_panel, i - fcfg.r, fcfg.r, device)
+        if task is None:
+            i += fcfg.r; step += 1; continue
+
+        # ---- (1) IL step: adapt + predict ----
+        optim_phi.zero_grad(set_to_none=True)
+        optim_psi.zero_grad(set_to_none=True)
+        test_loss, pred_qry, y_qry = fomaml_step(model, task, fcfg, train=True)
+        optim_phi.step(); optim_psi.step()
+
+        preds_np = pred_qry.cpu().detach().numpy()
+        ys_np = y_qry.cpu().detach().numpy()
+        d_np = task.qry_dates
+        c_np = task.qry_codes
+        ic, icir, ric, ricir = cross_sectional_ic(preds_np, ys_np, d_np)
+
+        step_log_rows.append({
+            "step": step,
+            "support_start": pd.Timestamp(udates[i - fcfg.r]).date(),
+            "support_end": pd.Timestamp(udates[i - 1]).date(),
+            "query_start": pd.Timestamp(udates[i]).date(),
+            "query_end": pd.Timestamp(udates[min(i + fcfg.r - 1, len(udates) - 1)]).date(),
+            "n_support": int(task.x_sup.shape[0]),
+            "n_query": int(task.x_qry.shape[0]),
+            "test_loss": float(test_loss),
+            "ic": float(ic), "icir": float(icir),
+            "ric": float(ric), "ricir": float(ricir),
+        })
+
+        # ---- (2) Build per-(date, code) pred lookup for the query window ----
+        # task.qry_dates is parallel with preds_np
+        day_preds: dict[pd.Timestamp, dict[str, float]] = {}
+        for d, c, p, a in zip(d_np, c_np, preds_np, ys_np):
+            d_ts = pd.Timestamp(d)
+            day_preds.setdefault(d_ts, {})[str(c)] = float(p)
+            pred_rows.append({
+                "date": d_ts.date(),
+                "stock_code_id": str(c),
+                "pred": float(p), "actual": float(a),
+            })
+
+        # ---- (3) Simulate portfolio for each day in the query window ----
+        for day_idx in range(fcfg.r):
+            di = i + day_idx
+            if di >= len(udates):
+                break
+            today = pd.Timestamp(udates[di])
+            if today > pd.Timestamp(end):
+                break
+
+            today_preds = day_preds.get(today, {})
+            target = sorted(
+                ((c, p) for c, p in today_preds.items() if p >= thresh),
+                key=lambda x: -x[1],
+            )[:cfg.top_k]
+            target_codes = [c for c, _ in target]
+            target_set = set(target_codes)
+            held_set = set(positions)
+
+            sell_candidates = sorted(
+                held_set - target_set,
+                key=lambda c: today_preds.get(c, -np.inf),
+            )
+            buy_candidates = [c for c in target_codes if c not in held_set]
+            if cfg.n_drop is not None:
+                sell_candidates = sell_candidates[: cfg.n_drop]
+            buy_budget = len(sell_candidates) + (cfg.top_k - len(held_set))
+            buy_candidates = buy_candidates[: max(buy_budget, 0)]
+
+            # SELLS
+            for code in sell_candidates:
+                if code not in closes:
+                    continue
+                px = deal_series[code].get(today, np.nan)
+                hi = highs[code].get(today, np.nan)
+                lo = lows[code].get(today, np.nan)
+                pc = prev_close[code].get(today, np.nan)
+                if not np.isfinite(px):
+                    continue
+                if _is_limit_locked(hi, lo, pc, cfg.limit_threshold):
+                    continue
+                shares = positions[code]
+                if shares <= 0:
+                    continue
+                notional = shares * float(px)
+                cost = max(notional * close_cost, min_cost)
+                proceeds = notional - cost
+                cash += proceeds
+                buy_price = entry.get(code, {}).get("price", float(px))
+                trade_return = ((float(px) - buy_price) / buy_price) if buy_price > 0 else 0.0
+                trades.append({
+                    "date": today, "code": code, "side": "SELL",
+                    "price": float(px), "shares": shares, "cashflow": proceeds,
+                    "trade_return": trade_return,
+                })
+                positions.pop(code, None)
+                entry.pop(code, None)
+
+            # BUYS — qlib slot formula
+            n_buys = len(buy_candidates)
+            slot_capital = (cash * cfg.risk_degree / n_buys) if n_buys > 0 else 0.0
+            for code in buy_candidates:
+                if code not in closes:
+                    continue
+                px = deal_series[code].get(today, np.nan)
+                hi = highs[code].get(today, np.nan)
+                lo = lows[code].get(today, np.nan)
+                pc = prev_close[code].get(today, np.nan)
+                if not np.isfinite(px) or px <= 0:
+                    continue
+                if _is_limit_locked(hi, lo, pc, cfg.limit_threshold):
+                    continue
+                shares = slot_capital / float(px)
+                notional = shares * float(px)
+                cost = max(notional * open_cost, min_cost)
+                total = notional + cost
+                if total > cash:
+                    continue
+                cash -= total
+                positions[code] = shares
+                entry[code] = {"price": float(px), "cost": total}
+                trades.append({
+                    "date": today, "code": code, "side": "BUY",
+                    "price": float(px), "shares": shares, "cashflow": total,
+                    "trade_return": np.nan,
+                })
+
+            # Mark-to-close
+            mark = 0.0
+            for code, sh in positions.items():
+                if code in closes:
+                    cl = closes[code].get(today, np.nan)
+                    if np.isfinite(cl):
+                        mark += sh * float(cl)
+            equity_rows.append((today, cash + mark))
+            daily_rows.append({
+                "date": today, "cash": cash, "mark_value": mark,
+                "n_positions": len(positions), "n_targets": len(target_codes),
+            })
+
+        log_fn(f"[live-IL] step {step:3d}: q={pd.Timestamp(udates[i]).date()}.."
+               f"{pd.Timestamp(udates[min(i+fcfg.r-1, len(udates)-1)]).date()} "
+               f"loss={test_loss:.5f} ic={ic:+.4f} ric={ric:+.4f} "
+               f"equity={equity_rows[-1][1]:,.0f}" if equity_rows else "")
+        i += fcfg.r
+        step += 1
+
+    eq = pd.DataFrame(equity_rows, columns=["date", "equity"])
+    trades_df = pd.DataFrame(trades) if trades else pd.DataFrame(columns=[
+        "date", "code", "side", "price", "shares", "cashflow", "trade_return"])
+    summary = _equity_summary(eq, cfg.capital, trades_df)
+    bt_result = BTResult(equity=eq, trades=trades_df,
+                         daily=pd.DataFrame(daily_rows), summary=summary)
+    step_log_df = pd.DataFrame(step_log_rows)
+    predictions_df = pd.DataFrame(pred_rows)
+    return bt_result, step_log_df, predictions_df

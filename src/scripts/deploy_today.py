@@ -2,10 +2,10 @@
 
 Schedule (typical):
    T-1 15:30-16:00  TWSE settlement window (course system updates bars)
-   T-1 16:00 onward (or T 11:00)  scrape today's bar:
-                                      python src/scripts/scrape.py
+   weekly/monthly   drop fresh TEJ half-year CSV into src/data/stock_data_all/
+                    and re-run: python src/scripts/import_tej.py
    T   12:00        run THIS script -- 1 hour before order window closes:
-                                      python src/scripts/deploy_today.py
+                                      python src/scripts/deploy_today.py --cash NT$X
 
 Causal contract:
    - Features for prediction use bars through (T - 1)  (yesterday's close).

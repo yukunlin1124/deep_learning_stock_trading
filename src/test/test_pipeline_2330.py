@@ -97,8 +97,9 @@ def require_full_cache(code: str) -> None:
         print(f"\n*** SKIP: {code} cache is incomplete ***")
         print(f"have: {sorted(have)}")
         print(f"missing: {missing}")
-        print("Wait for the scrape (src/scripts/scrape.py) to finish "
-              f"all 11 years for {code}, then rerun this test.")
+        print("Drop fresh TEJ CSVs into src/data/stock_data_all/ and run "
+              f"src/scripts/import_tej.py to populate {code}'s cache, "
+              "then rerun this test.")
         raise SystemExit(0)
 
 

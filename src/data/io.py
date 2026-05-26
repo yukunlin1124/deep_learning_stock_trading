@@ -1,17 +1,21 @@
-"""Local caching wrapper around stock_api.get_taiwan_stock_data.
+"""Read-only cache wrapper for per-(stock, year) OHLC bars.
 
-Each TWSE fetch sleeps 2s per month so we cache per (stock_code, year) CSV
-on disk and only hit the network for missing years.
+Cache is populated by `src/scripts/import_tej.py` from TEJ's half-year CSVs
+under `src/data/stock_data_all/`. Once imported, all downstream code (panel
+build, training, backtest, deploy) reads cached CSVs from `src/_cache/` and
+never hits the network.
 
-CACHE_DIR points at the project-level src/_cache regardless of where
-this module is imported from.
+Schema of each cache file (`src/_cache/{code}_{year}.csv`):
+    date, capacity, turnover, high, low, close, change,
+    transaction_volume, stock_code_id, open
+
+This module previously had yfinance + TWSE-direct fallback fetchers; both
+were removed once the TEJ pipeline became the sole data source.
 """
 from __future__ import annotations
 
 from pathlib import Path
 import pandas as pd
-
-from stock_api import get_taiwan_stock_data
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CACHE_DIR = PROJECT_ROOT / "src" / "_cache"
@@ -23,25 +27,39 @@ def _cache_path(stock_code: str, year: int) -> Path:
 
 
 def fetch_year(stock_code: str, year: int) -> pd.DataFrame:
+    """Read one year of bars for one stock from the local cache.
+
+    Returns an empty DataFrame (with the legacy schema) if the cache file
+    doesn't exist or has only a header. Callers that need full coverage
+    should run `src/scripts/import_tej.py` first.
+    """
     p = _cache_path(stock_code, year)
-    if p.exists():
-        df = pd.read_csv(p, parse_dates=["date"])
-        return df
-    df = get_taiwan_stock_data(stock_code, f"{year}-01-01", f"{year}-12-31")
-    df.to_csv(p, index=False)
-    return df
+    if not p.exists():
+        return _empty_frame()
+    return pd.read_csv(p, parse_dates=["date"])
 
 
 def fetch_range(stock_code: str, start: str, end: str) -> pd.DataFrame:
     s, e = pd.Timestamp(start), pd.Timestamp(end)
     frames = [fetch_year(stock_code, y) for y in range(s.year, e.year + 1)]
-    df = pd.concat(frames, ignore_index=True)
+    df = pd.concat(frames, ignore_index=True) if frames else _empty_frame()
+    if df.empty:
+        return df
     mask = (df["date"] >= s) & (df["date"] <= e)
     return df[mask].sort_values("date").reset_index(drop=True)
 
 
+def _empty_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=[
+        "date", "capacity", "turnover", "high", "low", "close",
+        "change", "transaction_volume", "stock_code_id", "open",
+    ])
+
+
 if __name__ == "__main__":
+    import time
+    t0 = time.monotonic()
     df = fetch_range("2330", "2024-01-01", "2024-03-31")
+    print(f"fetched {len(df)} rows in {time.monotonic()-t0:.2f}s")
     print(df.head())
-    print("rows:", len(df), "cols:", list(df.columns))
     print("dtypes:\n", df.dtypes)

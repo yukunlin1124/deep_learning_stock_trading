@@ -29,16 +29,17 @@ deep_learning_stock_trading/
 src/
 ├── __init__.py
 ├── data/
-│   ├── io.py            # TWSE CSV cache wrapper
-│   ├── handler.py       # Alpha360 feature builder + PanelTensors
-│   ├── processor.py     # RobustZScoreNorm + Fillna + CSRankNorm
-│   └── universe.py      # 150-code pool + semi-annual top-50 schedule
+│   ├── io.py                  # read-only OHLC cache wrapper (cache populated by import_tej.py)
+│   ├── handler.py             # Alpha360 feature builder + PanelTensors
+│   ├── processor.py           # RobustZScoreNorm + Fillna + CSRankNorm
+│   ├── universe.py            # TEJ index loader: TW50 + TM100 monthly snapshots
+│   └── stock_data_all/        # raw TEJ files (half-year CSVs + TW50.csv + TM100.csv)
 ├── model/
-│   ├── gru.py           # GRUBase (qlib pytorch_gru defaults)
-│   └── double_adapt.py  # FeatureAdapter + LabelAdapter + DoubleAdapt wrapper
+│   ├── gru.py                 # GRUBase (qlib pytorch_gru defaults)
+│   └── double_adapt.py        # FeatureAdapter + LabelAdapter + DoubleAdapt wrapper
 ├── trainer/
-│   ├── maml.py          # FOMAML pretrain loop, Task, sample/eval helpers
-│   └── incremental.py   # fake-online IL loop (walks 2024 → panel max)
+│   ├── maml.py                # FOMAML pretrain loop, Task, sample/eval helpers
+│   └── incremental.py         # fake-online IL loop (walks 2022 → panel max)
 ├── evaluate/
 │   ├── metrics.py             # cross_sectional_ic (Pearson IC + Spearman RankIC)
 │   ├── trading_rules.py       # TWSE tick rounding, commission, sell tax, lot size
@@ -47,27 +48,27 @@ src/
 ├── workflow/
 │   └── forecast.py            # live forecast on label-less newest dates
 ├── scripts/
-│   ├── scrape.py              # cache populator (run once; --all for full TWSE)
-│   ├── retry.py               # post-scrape rescue (failed/missing pairs)
+│   ├── import_tej.py          # populate src/_cache/ from TEJ half-year CSVs
 │   ├── train.py               # main entry point (pretrain → IL → backtest → forecast)
 │   ├── deploy_today.py        # daily inference + order submission
 │   └── holdings.py            # query current holdings via Get_User_Stocks
 ├── test/
 │   ├── __init__.py
-│   ├── test_pipeline_2330.py   # end-to-end smoke test on stock 2330 only
-│   └── output/                 # test artifacts (gitignored)
-├── output/              # training artifacts (gitignored)
-└── _cache/              # per-(stock, year) CSV cache (gitignored)
+│   ├── test_pipeline_2330.py  # end-to-end smoke test on stock 2330 only
+│   └── output/                # test artifacts (gitignored)
+├── output/                    # training artifacts (gitignored)
+└── _cache/                    # per-(stock, year) CSV cache (gitignored; populated by import_tej.py)
 ```
 
 ### `src/data/` — data layer
 
 | File | Key items |
 |---|---|
-| `io.py` | `fetch_year(code, year)`, `fetch_range(code, start, end)` — TWSE cache wrapper. `CACHE_DIR = src/_cache/`. Network calls only on cache miss. |
+| `io.py` | `fetch_year(code, year)` / `fetch_range(code, start, end)` — **read-only** wrapper around the local CSV cache at `src/_cache/`. Returns empty DataFrame for missing files; the cache is populated by `import_tej.py`. No network access. |
 | `handler.py` | `compute_alpha360(df)` builds (60, 6) tensor per (stock, date). `build_panel(bars)` stacks all stocks into a long-format `PanelTensors(X, y, dates, codes)`. |
 | `processor.py` | `fit_robust_zscore(X_pretrain)` returns `(median, MAD)`; `apply_robust_zscore` + `fillna(value=0)` for features. `csrank_normalize_per_date(y, dates)` for labels. |
-| `universe.py` | `CANDIDATE_CODES` list, `get_candidate_pool() → 150 codes`, `build_universe_schedule(bars, ...)` returns one row per semi-annual rebalance with the active top-50. |
+| `universe.py` | **TEJ index mask loader.** `get_index_universe_codes(name)` returns the historical union for `name ∈ {TW50, TM100}` (~99 / ~266 codes). `build_universe_schedule(name, start, end)` returns one row per semi-annual rebalance with `{asof, codes, weights}` looked up from TEJ's monthly snapshots in `stock_data_all/TW50.csv` and `stock_data_all/TM100.csv`. Per-index thin wrappers also exposed: `get_tw50_*` / `get_tm100_*`. |
+| `stock_data_all/` | TEJ raw inputs: 22 half-year price CSVs (`2016_H1.csv` → `2026_H1.csv`) + `TW50.csv` (184 monthly TW50 snapshots, 2011-2026) + `TM100.csv` (184 monthly TM100 snapshots). cp950-encoded. |
 
 ### `src/model/` — neural modules
 
@@ -102,9 +103,8 @@ src/
 
 | File | What it does |
 |---|---|
-| `scrape.py` | Iterates `get_candidate_pool() × range(2016, 2027)` and calls `fetch_year` for each. Logs progress to `src/logs/scrape.log`. Resumable. `--all` expands the scrape target to every 4-digit TWSE code (~1072). |
-| `retry.py` | Parses `scrape.log` for `FAIL` lines + scans for missing cache files; retries each pair once. Logs to `src/logs/retry.log`. `--all` mirrors `scrape.py`'s scope. |
-| `train.py` | The orchestrator. Loads bars → builds panel → applies universe schedule → fits feature norm → pretrain → IL → backtest → live forecast. Writes all artifacts to `src/output/run{N}/`. Tees full stdout/stderr to `src/logs/train_run{N}_YYYYMMDD_HHMMSS.log`. |
+| `import_tej.py` | Reads TEJ half-year CSVs from `src/data/stock_data_all/` and writes per-(stock, year) cache files to `src/_cache/`. `--universe TW50` (default) / `TM100` / `BOTH` filters which codes to keep. Runs in <30s, no network. |
+| `train.py` | The orchestrator. Loads bars → builds panel → applies universe schedule → fits feature norm → pretrain → IL → backtest → live forecast. `--universe TW50` (default) / `TM100` picks which TEJ index to train against. Writes all artifacts to `src/output/run{N}/`. Tees full stdout/stderr to `src/logs/train_run{N}_YYYYMMDD_HHMMSS.log`. |
 | `deploy_today.py` | Daily inference + order submission. **Requires `--cash NT$`** (read from the course website). Logs orders to `src/output/run{N}/orders_YYYYMMDD.csv`, inferences to `inferences_YYYYMMDD.csv`, and tees full stdout to `src/logs/deploy_YYYYMMDD.log` (appended across multiple calls per day). |
 | `holdings.py` | Query current settled holdings via `Get_User_Stocks`, cross-reference against today's order log to show which submitted orders filled. |
 
@@ -112,8 +112,6 @@ src/
 
 | File | Contents |
 |---|---|
-| `scrape.log` | Append-mode log of every `scrape.py` invocation: per-stock/year fetch progress, ETA, FAIL lines |
-| `retry.log` | Per-pair retry attempt log from `retry.py` |
 | `train_run{N}_YYYYMMDD_HHMMSS.log` | Per-run full training session capture (every print from train.py) |
 | `deploy_YYYYMMDD.log` | Append-mode daily deploy session log (every invocation of `deploy_today.py`) |
 
@@ -182,28 +180,30 @@ and `src/data/universe.py`). `run_course_backtest.py` additionally adds
 ## Data flow
 
 ```
-TWSE web    ── fetch ──>  _cache/{code}_{year}.csv      (src/scripts/scrape.py)
-                              │
-                              ├── fetch_range  ──>  raw bars dict
-                              │                         │
-                              │                         ├── compute_alpha360 per stock ──>  PanelTensors
-                              │                         │                                       │
-                              │                         │                                       ├── universe schedule mask
-                              │                         │                                       ├── RobustZScoreNorm + Fillna
-                              │                         │                                       │
-                              │                         │                                       ├── pretrain (FOMAML, 2016-2021)  ──>  pretrained.pt
-                              │                         │                                       │       └── early-stop on 2022-2023 val IC
-                              │                         │                                       │
-                              │                         │                                       ├── IL (FOMAML, 2024-now)         ──>  final.pt
-                              │                         │                                       │       └── per-step IC/RankIC          predictions.csv
-                              │                         │                                       │                                       il_log.csv
-                              │                         │                                       │
-                              │                         │                                       ├── backtest (top-K longs)        ──>  equity.csv
-                              │                         │                                       │                                       trades.csv
-                              │                         │                                       │
-                              │                         │                                       └── live forecast (latest 20d)    ──>  live_forecast.csv
-                              │                         │
-                              │                         └── (bars also passed directly to backtest for OHLC fills)
+TEJ half-year CSVs  ── import_tej.py ──>  src/_cache/{code}_{year}.csv
+(stock_data_all/)        (TW50 or TM100 union filter)
+                                              │
+                                              ├── fetch_range ──> raw bars dict
+                                              │                         │
+                                              │                         ├── compute_alpha360 per stock ──> PanelTensors
+                                              │                         │                                       │
+TEJ TW50.csv / TM100.csv  ─ universe.py ──────┼──> universe schedule mask
+                                              │                         │
+                                              │                         ├── RobustZScoreNorm + Fillna
+                                              │                         │
+                                              │                         ├── pretrain (FOMAML, 2016-2021)  ──> pretrained.pt
+                                              │                         │       └── early-stop on 2022-2023 val IC
+                                              │                         │
+                                              │                         ├── IL (FOMAML, 2022-now, r=20)   ──> final.pt
+                                              │                         │       └── per-step IC/RankIC         predictions.csv
+                                              │                         │                                      il_log.csv
+                                              │                         │
+                                              │                         ├── qlib backtest (top-K longs)   ──> equity.csv
+                                              │                         │                                      trades.csv
+                                              │                         │
+                                              │                         └── live forecast (latest 20d)    ──> live_forecast.csv
+                                              │
+                                              └── (bars also passed to qlib backtest engine for fills)
 ```
 
 ## Docs
@@ -211,8 +211,9 @@ TWSE web    ── fetch ──>  _cache/{code}_{year}.csv      (src/scripts/scr
 | File | Contents |
 |---|---|
 | [project_structure.md](project_structure.md) | This file — code layout and module map |
-| [model_result.md](model_result.md) | Per-run training comparison (runs 1-5) using the course backtest as the evaluation harness |
-| [backtest.md](backtest.md) | The qlib backtest + course backtest on run5 — engines, headline numbers, how to reproduce |
+| [model.md](model.md) | Per-run training log: what changed in each of runs 1-6 and why, plus headline diffs in both backtest engines |
+| [qlib_backtest.md](qlib_backtest.md) | In-process qlib-style backtest engine — TWSE costs, `deal_price=close`, cross-run comparison table, tunable knobs |
+| [course_backtest.md](course_backtest.md) | Course `BacktestSystem` bridge — zero costs, 1-day causal lag, leaderboard upload |
 | [auto_trader.md](auto_trader.md) | Daily `deploy_today.py` pipeline + scheduling guide |
 | [topk_ndrop_selection.md](topk_ndrop_selection.md) | Why `top_k=10, n_drop=1` and how to pick for other universe sizes |
 
@@ -226,4 +227,4 @@ TWSE web    ── fetch ──>  _cache/{code}_{year}.csv      (src/scripts/scr
 - `stock_api` and `backtest_package` live outside `src/` to keep the
   third-party package surface obvious.
 - Data and training artifacts (`_cache/`, `output/`, `logs/`) are gitignored
-  — they're reproducible from `scripts/scrape.py` + `scripts/train.py`.
+  — they're reproducible from `scripts/import_tej.py` + `scripts/train.py`.

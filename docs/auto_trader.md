@@ -105,20 +105,22 @@ Action → Start a program:
 | Arguments | `src/scripts/deploy_today.py` |
 | Start in | `C:\workspace\deep_learning_stock_trading` |
 
-Trigger: daily at **12:00**. Add a separate trigger at **16:00** running
-`src/scripts/scrape.py` to keep the cache current.
+Trigger: daily at **12:00**. To keep the cache current you need to drop a
+fresh TEJ half-year CSV into `src/data/stock_data_all/` and re-run
+`src/scripts/import_tej.py` (no longer a per-day network scrape — TEJ
+exports are typically downloaded weekly/monthly).
 
 Skip weekends with the "Filter by days" condition (Monday-Friday only).
 
 ### 5. Schedule on Linux/macOS (cron)
 
 ```cron
-# Scrape yesterday's bar at 16:00 weekdays
-0 16 * * 1-5  cd /path/to/deep_learning_stock_trading && .venv/bin/python src/scripts/scrape.py
-
 # Trade at 12:00 weekdays
-0 12 * * 1-5  cd /path/to/deep_learning_stock_trading && TWSE_ACCOUNT=... TWSE_PASSWORD=... .venv/bin/python src/scripts/deploy_today.py
+0 12 * * 1-5  cd /path/to/deep_learning_stock_trading && TWSE_ACCOUNT=... TWSE_PASSWORD=... .venv/bin/python src/scripts/deploy_today.py --cash <NT$>
 ```
+
+(Cache refresh is a manual step after dropping new TEJ files —
+`.venv/bin/python src/scripts/import_tej.py` — not automated on a cron schedule.)
 
 ## What the script does (step by step)
 
@@ -214,7 +216,7 @@ This means:
 
 | Frequency | What | Why |
 |---|---|---|
-| Each trading day | `deploy_today.py` at 12:00 | Submit fresh orders for the day |
-| Each trading day | `scrape.py` at 16:00 | Keep cache current with yesterday's bar |
+| Each trading day | `deploy_today.py --cash NT$X` at 12:00 | Submit fresh orders for the day |
+| Weekly / monthly | Drop fresh TEJ half-year CSV into `src/data/stock_data_all/`, run `import_tej.py` | Keep cache current; TEJ doesn't have a daily delta export |
 | Every ~20 trading days | Re-run `train.py` | Roll one more FOMAML bi-level update into the model |
-| Every 6 months | Universe rebalance happens automatically inside `train.py`; manually exit positions in stocks that drop out of the new active 50 | Match the schedule in `data/universe.py` |
+| Every quarter | TW50/TM100 mask refresh — TEJ publishes a new monthly snapshot in `TW50.csv` / `TM100.csv`; just replace the file | Match TEJ's official rebalance schedule (see [model.md](model.md)) |
