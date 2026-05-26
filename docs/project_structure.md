@@ -7,10 +7,10 @@ File-by-file walkthrough. Mirrors qlib's `contrib/` split
 
 ```
 deep_learning_stock_trading/
-├── analysis/                  # the pipeline (this project, incl. test/)
+├── src/                       # the pipeline (this project, incl. test/)
 ├── qlib/                      # qlib clone — reference only (never imported)
-├── stock_project_for_class/   # TWSE data API + coursework materials
-├── docs/                      # architecture + structure docs
+├── stock_project_for_class/   # TWSE data API + course backtest framework
+├── docs/                      # architecture + result + structure docs
 ├── .venv/                     # Python venv (gitignored)
 ├── README.md
 └── .gitignore
@@ -18,15 +18,15 @@ deep_learning_stock_trading/
 
 | Path | Purpose |
 |---|---|
-| `analysis/` | All code that runs (data, model, trainer, evaluation, workflow, scripts) |
+| `src/` | All code that runs (data, model, trainer, evaluation, workflow, scripts) |
 | `qlib/` | Microsoft's qlib fork — referenced for architecture parity, *not* imported at runtime |
-| `stock_project_for_class/` | The TWSE fetch API + course materials (`course_example.py`, `rules.md`, etc.) |
-| `docs/` | Project docs |
+| `stock_project_for_class/` | TWSE fetch API (`stock_api/`) + course `backtest_package/` (`BacktestSystem` + `examplebacktest.py` template) + course materials (`rules.md`, etc.) |
+| `docs/` | Project docs — see [Docs](#docs) section below |
 
-## `analysis/` — the pipeline
+## `src/` — the pipeline
 
 ```
-analysis/
+src/
 ├── __init__.py
 ├── data/
 │   ├── io.py            # TWSE CSV cache wrapper
@@ -40,15 +40,18 @@ analysis/
 │   ├── maml.py          # FOMAML pretrain loop, Task, sample/eval helpers
 │   └── incremental.py   # fake-online IL loop (walks 2024 → panel max)
 ├── evaluate/
-│   ├── metrics.py       # cross_sectional_ic (Pearson IC + Spearman RankIC)
-│   ├── trading_rules.py # TWSE tick rounding, commission, sell tax, lot size
-│   └── backtest.py      # top-K equity simulator over IL predictions
+│   ├── metrics.py             # cross_sectional_ic (Pearson IC + Spearman RankIC)
+│   ├── trading_rules.py       # TWSE tick rounding, commission, sell tax, lot size
+│   ├── backtest_qlib.py       # qlib-style in-process backtest (TopkDropoutStrategy)
+│   └── run_course_backtest.py # bridge model preds → course's BacktestSystem
 ├── workflow/
-│   └── forecast.py      # live forecast on label-less newest dates
+│   └── forecast.py            # live forecast on label-less newest dates
 ├── scripts/
-│   ├── scrape.py        # cache populator (run once)
-│   ├── retry.py         # post-scrape rescue (failed/missing pairs)
-│   └── train.py         # main entry point (pretrain → IL → backtest → forecast)
+│   ├── scrape.py              # cache populator (run once; --all for full TWSE)
+│   ├── retry.py               # post-scrape rescue (failed/missing pairs)
+│   ├── train.py               # main entry point (pretrain → IL → backtest → forecast)
+│   ├── deploy_today.py        # daily inference + order submission
+│   └── holdings.py            # query current holdings via Get_User_Stocks
 ├── test/
 │   ├── __init__.py
 │   ├── test_pipeline_2330.py   # end-to-end smoke test on stock 2330 only
@@ -86,7 +89,8 @@ analysis/
 |---|---|
 | `metrics.py` | `cross_sectional_ic(preds, ys, dates)` → `(mean_IC, ICIR, mean_RankIC, RankICIR)`. Per-date correlation aggregated. |
 | `trading_rules.py` | TWSE-specific cost model: `tick_size`, `round_buy/sell`, `commission`, `buy_cost`, `sell_proceeds`. `SHARES_PER_LOT=1000`, `TAX_RATE=0.003`, `COMMISSION_RATE=0.001425`. |
-| `backtest.py` | `run_backtest_from_predictions(preds_df, bars, BTConfig)` — top-K long-only over IL predictions; one-shot limit-at-prev-close orders; fill iff `low ≤ limit ≤ high`. Returns equity, trades, daily logs, summary. |
+| `backtest_qlib.py` | `run_qlib_backtest_from_predictions(preds, bars, QlibBTConfig)` — mirrors qlib's `TopkDropoutStrategy` + `deal_price="close"` (or `"open"`) execution, with configurable `costs="twse"` or `"qlib"` and `risk_degree=0.95`. Slot per buy = `cash * risk_degree / len(buys)` (qlib exact). |
+| `run_course_backtest.py` | Bridges DoubleAdapt predictions into the course's `BacktestSystem` (from `stock_project_for_class/backtest_package/`). Pre-builds the framework's stock cache from `src/_cache/`, defines `select_stock` / `trade_strategy` mirroring [examplebacktest.py](../stock_project_for_class/backtest_package/stock_backtest_v1/examplebacktest.py), saves `course_backtest.xlsx` per run, optionally uploads to leaderboard via `--upload`. |
 
 ### `src/workflow/` — production helpers
 
@@ -98,10 +102,11 @@ analysis/
 
 | File | What it does |
 |---|---|
-| `scrape.py` | Iterates `get_candidate_pool() × range(2016, 2027)` and calls `fetch_year` for each. Logs progress to `src/logs/scrape.log`. Resumable. |
-| `retry.py` | Parses `scrape.log` for `FAIL` lines + scans for missing cache files; retries each pair once. Logs to `src/logs/retry.log`. |
+| `scrape.py` | Iterates `get_candidate_pool() × range(2016, 2027)` and calls `fetch_year` for each. Logs progress to `src/logs/scrape.log`. Resumable. `--all` expands the scrape target to every 4-digit TWSE code (~1072). |
+| `retry.py` | Parses `scrape.log` for `FAIL` lines + scans for missing cache files; retries each pair once. Logs to `src/logs/retry.log`. `--all` mirrors `scrape.py`'s scope. |
 | `train.py` | The orchestrator. Loads bars → builds panel → applies universe schedule → fits feature norm → pretrain → IL → backtest → live forecast. Writes all artifacts to `src/output/run{N}/`. Tees full stdout/stderr to `src/logs/train_run{N}_YYYYMMDD_HHMMSS.log`. |
-| `deploy_today.py` | Daily inference + order submission. Logs orders to `src/output/run{N}/orders_YYYYMMDD.csv`, inferences to `inferences_YYYYMMDD.csv`, and tees full stdout to `src/logs/deploy_YYYYMMDD.log` (appended across multiple calls per day). |
+| `deploy_today.py` | Daily inference + order submission. **Requires `--cash NT$`** (read from the course website). Logs orders to `src/output/run{N}/orders_YYYYMMDD.csv`, inferences to `inferences_YYYYMMDD.csv`, and tees full stdout to `src/logs/deploy_YYYYMMDD.log` (appended across multiple calls per day). |
+| `holdings.py` | Query current settled holdings via `Get_User_Stocks`, cross-reference against today's order log to show which submitted orders filled. |
 
 ### `src/logs/` — session logs (gitignored)
 
@@ -149,11 +154,19 @@ own implementation. Notable files:
 stock_project_for_class/
 ├── stock_api/                 # the actual API package
 │   ├── __init__.py
-│   ├── core.py                # get_taiwan_stock_data dispatcher
+│   ├── core.py                # get_taiwan_stock_data + Get_User_Stocks + Buy_Stock + Sell_Stock
 │   ├── fetchers.py            # TWSE / TPEX / ESB HTML+JSON scrapers (2s sleep per call)
 │   ├── symbols.py             # symbol lookups
-│   ├── utils.py               # date conversion helpers
-│   └── stock_symbol_map.json  # ~2565 listed codes
+│   ├── utils.py               # date conversion helpers + safe_get_json
+│   └── stock_symbol_map.json  # ~2565 listed codes (TWSE/OTC/ETF/ESB)
+├── backtest_package/          # course's BacktestSystem framework
+│   └── stock_backtest_v1/
+│       ├── backtest/
+│       │   ├── backtest.py    # BacktestSystem class (set_period → execute_strategy → calc_perf)
+│       │   ├── Stock_API.py   # local copy bundled with the backtest framework
+│       │   └── type.py        # TransactionRecord / User_Inventory / Daily_Asset dataclasses
+│       ├── examplebacktest.py # template our src/evaluate/run_course_backtest.py mirrors
+│       └── example.py         # live API usage example
 ├── course_example.py          # course's reference example
 ├── project_objective.md       # coursework spec
 ├── rules.md                   # coursework rules (trading constraints)
@@ -162,7 +175,9 @@ stock_project_for_class/
 
 Imported as `from stock_api import get_taiwan_stock_data` after
 `sys.path.insert(0, "stock_project_for_class")` (done in `src/data/io.py`
-and `src/data/universe.py`).
+and `src/data/universe.py`). `run_course_backtest.py` additionally adds
+`backtest_package/stock_backtest_v1/` to `sys.path` and imports
+`BacktestSystem` from there.
 
 ## Data flow
 
@@ -191,14 +206,24 @@ TWSE web    ── fetch ──>  _cache/{code}_{year}.csv      (src/scripts/scr
                               │                         └── (bars also passed directly to backtest for OHLC fills)
 ```
 
+## Docs
+
+| File | Contents |
+|---|---|
+| [project_structure.md](project_structure.md) | This file — code layout and module map |
+| [model_result.md](model_result.md) | Per-run training comparison (runs 1-5) using the course backtest as the evaluation harness |
+| [backtest.md](backtest.md) | The qlib backtest + course backtest on run5 — engines, headline numbers, how to reproduce |
+| [auto_trader.md](auto_trader.md) | Daily `deploy_today.py` pipeline + scheduling guide |
+| [topk_ndrop_selection.md](topk_ndrop_selection.md) | Why `top_k=10, n_drop=1` and how to pick for other universe sizes |
+
 ## Conventions
 
-- All `analysis/*` modules use **absolute imports** through the `analysis`
-  package (e.g. `from src.data.handler import build_panel`).
+- All `src/*` modules use **absolute imports** through the `src` package
+  (e.g. `from src.data.handler import build_panel`).
 - Scripts in `src/scripts/` add the project root to `sys.path` so
   `python src/scripts/train.py` works from the repo root.
 - The qlib clone is **never** imported — it's reference material only.
-- `stock_api` lives outside `analysis/` to keep the third-party package
-  surface obvious.
-- Data and training artifacts (`_cache/`, `output/`) are gitignored — they're
-  reproducible from `scripts/train.py`.
+- `stock_api` and `backtest_package` live outside `src/` to keep the
+  third-party package surface obvious.
+- Data and training artifacts (`_cache/`, `output/`, `logs/`) are gitignored
+  — they're reproducible from `scripts/scrape.py` + `scripts/train.py`.

@@ -41,6 +41,18 @@ def main() -> None:
 
     print(f"=== Holdings for account ending in ...{args.account[-3:]} ===")
     print(f"raw response type: {type(raw).__name__}")
+    if isinstance(raw, list):
+        print(f"raw list length: {len(raw)}")
+        if raw:
+            print(f"  first item type: {type(raw[0]).__name__}")
+            print(f"  first item: {raw[0]!r}")
+            if len(raw) > 1:
+                print(f"  ...and {len(raw)-1} more")
+    elif isinstance(raw, dict):
+        print(f"raw dict keys: {list(raw.keys())[:10]}")
+        print(f"raw sample: {repr(raw)[:300]}")
+    elif isinstance(raw, str):
+        print(f"raw string sample: {raw[:300]!r}")
     print(f"parsed {len(holdings)} positions\n")
 
     if holdings:
@@ -49,9 +61,11 @@ def main() -> None:
         print(pd.DataFrame(rows).to_string(index=False))
         print()
 
-    # Cross-reference with today's order log if present.
+    # Cross-reference with today's order log if present (now in run{N}/ subdir).
     today = datetime.now().strftime("%Y%m%d")
-    log_path = OUT_BASE / f"orders_{today}.csv"
+    cur_file = OUT_BASE / "CURRENT"
+    run_name = cur_file.read_text().strip() if cur_file.exists() else ""
+    log_path = OUT_BASE / run_name / f"orders_{today}.csv"
     if log_path.exists():
         orders = pd.read_csv(log_path)
         attempted = orders[orders["status"] == "OK"][["side", "code", "lots", "price"]].copy()

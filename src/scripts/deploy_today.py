@@ -20,16 +20,16 @@ identical to whatever the backtest used.
 Credentials:
    Read from env vars TWSE_ACCOUNT and TWSE_PASSWORD. CLI args override.
 
-Run:
+Run (--cash is REQUIRED; copy the liquid cash figure from the course website):
    # Dry run (no orders submitted, just prints intended actions):
-   python src/scripts/deploy_today.py --dry-run
+   python src/scripts/deploy_today.py --dry-run --cash 9500000
 
    # Live trading (will hit Buy_Stock / Sell_Stock):
    $env:TWSE_ACCOUNT="..."
    $env:TWSE_PASSWORD="..."
-   python src/scripts/deploy_today.py
+   python src/scripts/deploy_today.py --cash 9500000
 
-Logs every intended/submitted order to src/output/orders_YYYYMMDD.csv.
+Logs every intended/submitted order to src/output/run{N}/orders_YYYYMMDD.csv.
 """
 from __future__ import annotations
 
@@ -167,25 +167,106 @@ def predict_for_yesterday(
 # ----------------- holdings + orders -----------------
 
 def parse_holdings(raw) -> dict[str, int]:
-    """Convert Get_User_Stocks response into {code: shares}. The course API's
-    return shape isn't strictly specified; this handles list-of-dicts and
-    string fallback (treat unknown as 'held' so we don't double-buy).
+    """Convert Get_User_Stocks response into {code: shares_count}.
+
+    Course API observed shape (one row per held stock):
+      {'usid': ..., 'stock_name': ..., 'beginning_price': ...,
+       'shares': 87,                  # <- LOTS, despite the name
+       'stock_code_id': '2303',       # <- the canonical code key
+       'createtime': ..., 'user_uid_id': ...}
+
+    The `shares` field is in LOTS (1 lot = 1000 actual shares); the rest of
+    deploy_today treats holdings[code] as a SHARE count and divides by
+    SHARES_PER_LOT downstream, so we multiply on parse to keep one consistent
+    internal unit.
     """
     holdings: dict[str, int] = {}
-    if raw is None:
+    if raw is None or raw == [] or raw == {}:
         return holdings
+
+    def code_from(item: dict) -> str:
+        return str(
+            item.get("stock_code_id") or item.get("stock_code")
+            or item.get("code") or ""
+        ).strip()
+
+    def lots_from(item: dict) -> int:
+        v = (item.get("shares") or item.get("quantity")
+             or item.get("stock_shares") or 0)
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
+
+    if isinstance(raw, dict):
+        for key in ("data", "stocks", "holdings", "user_stocks"):
+            if key in raw and isinstance(raw[key], (list, dict)):
+                return parse_holdings(raw[key])
+        for code, val in raw.items():
+            code = str(code).strip()
+            if not re.fullmatch(r"\d{4,5}", code):
+                continue
+            if isinstance(val, dict):
+                lots = lots_from(val)
+            else:
+                try:
+                    lots = int(val)
+                except (TypeError, ValueError):
+                    continue
+            if lots > 0:
+                holdings[code] = lots * SHARES_PER_LOT
+        return holdings
+
     if isinstance(raw, list):
         for item in raw:
             if isinstance(item, dict):
-                code = str(item.get("stock_code") or item.get("code") or "").strip()
-                shares = int(item.get("shares") or item.get("quantity") or 0)
-                if code:
-                    holdings[code] = shares
-    elif isinstance(raw, str):
-        # Best-effort: regex pull 4-digit codes from a stringified blob.
+                code = code_from(item)
+                lots = lots_from(item)
+                if code and lots > 0:
+                    holdings[code] = lots * SHARES_PER_LOT
+        return holdings
+
+    if isinstance(raw, str):
         for m in re.finditer(r"\b(\d{4})\b\D{1,40}?(\d+)", raw):
-            holdings.setdefault(m.group(1), int(m.group(2)))
+            holdings.setdefault(m.group(1), int(m.group(2)) * SHARES_PER_LOT)
+        return holdings
+
     return holdings
+
+
+def parse_holdings_detail(raw) -> dict[str, dict]:
+    """Like parse_holdings but keeps per-position cost basis info.
+
+    Returns {code: {shares, lots, beginning_price, stock_name}} where shares
+    is in actual share count (lots * SHARES_PER_LOT), beginning_price is the
+    per-share entry price the broker reports.
+    """
+    detail: dict[str, dict] = {}
+    if not isinstance(raw, list):
+        return detail
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("stock_code_id") or item.get("stock_code")
+                   or item.get("code") or "").strip()
+        try:
+            lots = int(item.get("shares") or item.get("quantity")
+                       or item.get("stock_shares") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not code or lots <= 0:
+            continue
+        try:
+            beg_px = float(item.get("beginning_price") or item.get("avg_price") or 0)
+        except (TypeError, ValueError):
+            beg_px = 0.0
+        detail[code] = {
+            "shares": lots * SHARES_PER_LOT,
+            "lots": lots,
+            "beginning_price": beg_px,
+            "stock_name": str(item.get("stock_name") or ""),
+        }
+    return detail
 
 
 @dataclass
@@ -200,12 +281,20 @@ def plan_orders(
     preds_df: pd.DataFrame,
     holdings: dict[str, int],
     bt_cfg: dict,
+    cash: float,
 ) -> list[IntendedOrder]:
-    capital = float(bt_cfg.get("capital", 1e8))
+    """Plan orders for today.
+
+    cash: liquid cash available for new buys (NT$). Pass the value shown on
+    the course website. Slot per buy is cash * risk_degree / len(buys)
+    (conservative: does NOT pre-add expected sell proceeds, unlike the
+    qlib backtest which assumes today's sells fill first).
+    """
     top_k = int(bt_cfg.get("top_k", 10))
     cost_alpha = float(bt_cfg.get("cost_alpha_bps", 70.0)) / 1e4
     n_drop = bt_cfg.get("n_drop", None)
     n_drop = int(n_drop) if n_drop is not None else None
+    risk_degree = float(bt_cfg.get("risk_degree", 0.95))     # qlib default
 
     target = (
         preds_df[preds_df["pred"] >= cost_alpha]
@@ -223,13 +312,24 @@ def plan_orders(
 
     if n_drop is not None:
         sell_candidates = sell_candidates[: n_drop]
-        buy_candidates = buy_candidates[: n_drop]
+    # qlib TopkDropoutStrategy buy formula: sells + (topk - holdings).
+    # Empty/partial book -> auto-fill open slots; full book -> n_drop replacement.
+    buy_budget = len(sell_candidates) + (top_k - len(held_set))
+    buy_candidates = buy_candidates[: max(buy_budget, 0)]
 
     prev_close = dict(zip(preds_df["code"], preds_df["prev_close"]))
     orders: list[IntendedOrder] = []
-    slot_capital = capital / top_k
 
-    # SELL first to free cash
+    # qlib's slot formula: cash * risk_degree / len(buys).
+    # Conservative: does NOT pre-add expected sell proceeds.
+    n_buys = len(buy_candidates)
+    slot_capital = (cash * risk_degree / n_buys) if n_buys > 0 else 0.0
+    if n_buys > 0:
+        print(f"      sizing: cash={cash:,.0f}  risk={risk_degree}  "
+              f"len(buys)={n_buys}  -> slot={slot_capital:,.0f} NT$/name "
+              f"(conservative: not assuming today's sells fill)")
+
+    # SELL first
     for code in sell_candidates:
         pc = prev_close.get(code)
         if pc is None or not np.isfinite(pc):
@@ -320,8 +420,12 @@ def main() -> None:
     ap.add_argument("--password", default=os.environ.get("TWSE_PASSWORD"),
                     help="course password (default: $TWSE_PASSWORD)")
     ap.add_argument("--n-drop", type=int, default=None,
-                    help="override BTConfig.n_drop for this run only "
+                    help="override n_drop for this run only "
                          "(use n_drop=top_k on day 1 to fill the book)")
+    ap.add_argument("--cash", type=float, required=True,
+                    help="REQUIRED. Liquid cash for new buys (NT$). The course "
+                         "website shows this; pass it here. Slot per buy = "
+                         "cash * risk_degree / len(buys).")
     ap.add_argument("--run", default=None,
                     help="which output/runN/ to load (default: read output/CURRENT)")
     args = ap.parse_args()
@@ -375,8 +479,14 @@ def main() -> None:
             print(f"      Get_User_Stocks failed: {e!r}  (assuming empty book)")
             raw = None
         holdings = parse_holdings(raw)
+        # Diagnostic: if API returned data but we parsed 0 positions, the response
+        # shape may not match what parse_holdings expects. Show a sample (trimmed).
+        if not holdings and raw not in (None, {}, []):
+            sample = repr(raw)[:400]
+            print(f"      WARNING: Get_User_Stocks returned non-empty {type(raw).__name__} "
+                  f"but parsed 0 positions. Sample: {sample}")
     print(f"      current holdings: {len(holdings)} positions")
-    orders = plan_orders(preds, holdings, bt_cfg)
+    orders = plan_orders(preds, holdings, bt_cfg, cash=args.cash)
     print(f"      planned: {sum(1 for o in orders if o.side=='SELL')} sells, "
           f"{sum(1 for o in orders if o.side=='BUY')} buys")
 

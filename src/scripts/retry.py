@@ -8,6 +8,7 @@ Each pair is retried at most once. Lingering failures are logged and we move on.
 """
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 import time
@@ -17,7 +18,7 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.data.io import fetch_year, CACHE_DIR  # noqa: E402
-from src.data.universe import get_candidate_pool  # noqa: E402
+from src.data.universe import get_candidate_pool, get_all_twse_codes  # noqa: E402
 
 START_YEAR = 2016
 END_YEAR = 2026
@@ -51,8 +52,7 @@ def parse_failures() -> list[tuple[str, int]]:
     return out
 
 
-def missing_pairs_in_universe() -> list[tuple[str, int]]:
-    universe = get_candidate_pool()
+def missing_pairs_in_universe(universe: list[str]) -> list[tuple[str, int]]:
     out: list[tuple[str, int]] = []
     for c in universe:
         for y in range(START_YEAR, END_YEAR + 1):
@@ -62,10 +62,21 @@ def missing_pairs_in_universe() -> list[tuple[str, int]]:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--all", action="store_true",
+                    help="scan all 4-digit TWSE codes for missing pairs "
+                         "(default: curated 150-code candidate pool)")
+    args = ap.parse_args()
+
+    universe = get_all_twse_codes() if args.all else get_candidate_pool()
     fail_pairs = parse_failures()
-    miss_pairs = missing_pairs_in_universe()
+    miss_pairs = missing_pairs_in_universe(universe)
+    # Only consider FAIL pairs for codes in our (possibly expanded) universe
+    universe_set = set(universe)
+    fail_pairs = [(c, y) for c, y in fail_pairs if c in universe_set]
     todo = list(dict.fromkeys(fail_pairs + miss_pairs))
-    log(f"retry: {len(fail_pairs)} prior-FAIL + {len(miss_pairs)} missing "
+    log(f"retry ({'all TWSE' if args.all else 'candidate 150'}): "
+        f"{len(fail_pairs)} prior-FAIL + {len(miss_pairs)} missing "
         f"-> {len(todo)} unique (stock, year) pairs")
     if not todo:
         log("nothing to retry"); return

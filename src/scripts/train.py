@@ -46,7 +46,10 @@ from src.trainer.maml import (  # noqa: E402
 )
 from src.trainer.incremental import ILConfig, run_incremental  # noqa: E402
 from src.evaluate.metrics import cross_sectional_ic  # noqa: E402
-from src.evaluate.backtest import BTConfig, run_backtest_from_predictions  # noqa: E402
+from src.evaluate.backtest_qlib import (  # noqa: E402
+    QlibBTConfig as BTConfig,
+    run_qlib_backtest_from_predictions as run_backtest_from_predictions,
+)
 from src.workflow.forecast import forecast_latest  # noqa: E402
 
 OUT_BASE = PROJECT_ROOT / "src" / "output"
@@ -223,9 +226,12 @@ def main() -> None:
     preds.to_csv(OUT_DIR / "predictions.csv", index=False)
     print(f"saved final.pt and IL logs")
 
-    # Run 2: n_drop=1 to match qlib's 10% daily turnover (run 1 used n_drop=3
-    # and saw ~30% annualized cost drag).
-    bt_cfg = BTConfig(n_drop=1)
+    # qlib backtest: top_k=10 (our 50-stock universe), n_drop=1 (10% turnover),
+    # cost_alpha_bps=70 (filter clearly bearish picks), costs="twse" (apples to
+    # the live deploy), deal_price="close" (qlib default, look-ahead but matches
+    # the example in stock_project_for_class/backtest_package).
+    bt_cfg = BTConfig(top_k=10, n_drop=1, cost_alpha_bps=70.0,
+                      costs="twse", deal_price="close")
     # Slice predictions to the backtest reporting window (2022-2023 is warmup).
     preds_for_backtest = preds[pd.to_datetime(preds["date"]) >= pd.Timestamp(BACKTEST_START)].copy()
     print(f"backtest window: {BACKTEST_START} -> {il_end_actual} "

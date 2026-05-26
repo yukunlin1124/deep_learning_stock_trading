@@ -71,6 +71,22 @@ def get_candidate_pool() -> list[str]:
     return out
 
 
+def get_all_twse_codes() -> list[str]:
+    """All 4-digit TWSE codes from the symbol map (~1072).
+
+    Use for the disk-scrape target when you want a broader universe than the
+    curated CANDIDATE_CODES list. Training still ranks by trailing-180d $vol
+    via `build_universe_schedule`, so the active top-N stays at TOP_N per
+    period regardless of how many codes are scraped.
+    """
+    m = load_symbol_map()
+    out = sorted(
+        c for c, info in m.items()
+        if isinstance(info, dict) and info.get("type") == "TWSE" and len(c) == 4
+    )
+    return out
+
+
 def get_universe() -> list[str]:
     """Legacy alias for the disk-scrape phase."""
     return get_candidate_pool()

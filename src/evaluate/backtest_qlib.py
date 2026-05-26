@@ -39,13 +39,14 @@ import pandas as pd
 
 @dataclass
 class QlibBTConfig:
-    capital: float = 1e8
+    capital: float = 1e8                 # starting cash: 100M NT$
     top_k: int = 50                      # qlib default; for our 50-stock universe, set to 10 for fair comparison
     n_drop: int = 5                      # qlib default
     cost_alpha_bps: float = 0.0          # qlib default: no threshold (every top-K name is targeted)
     costs: Literal["qlib", "twse"] = "qlib"
     limit_threshold: float = 0.095       # block trades at +/- 9.5% limit-up/down (TWSE limit is 10%)
     deal_price: Literal["close", "open"] = "close"
+    risk_degree: float = 0.95            # qlib default: 95% deployed, 5% cash reserve
     # "close" = qlib default (today's close; look-ahead, unimplementable live)
     # "open"  = today's open (achievable live via pre-9:00 order targeting the opening auction)
 
@@ -197,7 +198,10 @@ def run_qlib_backtest_from_predictions(
         buy_candidates = [c for c in target if c not in held_set]
         if cfg.n_drop is not None:
             sell_candidates = sell_candidates[: cfg.n_drop]
-            buy_candidates = buy_candidates[: cfg.n_drop]
+        # qlib TopkDropoutStrategy: buy = sells + (topk - holdings).
+        # Auto-fills partial book; falls back to n_drop replacement when full.
+        buy_budget = len(sell_candidates) + (cfg.top_k - len(held_set))
+        buy_candidates = buy_candidates[: max(buy_budget, 0)]
 
         # --- SELLS at today's deal_price (no fill check, no tick/lot rounding) ---
         for code in sell_candidates:
@@ -230,7 +234,10 @@ def run_qlib_backtest_from_predictions(
             entry.pop(code, None)
 
         # --- BUYS at today's deal_price ---
-        slot_capital = cfg.capital / cfg.top_k
+        # qlib's exact formula: slot per buy = current cash * risk_degree / len(buys).
+        # Sells above have already added their proceeds to cash, so this reinvests them.
+        n_buys = len(buy_candidates)
+        slot_capital = (cash * cfg.risk_degree / n_buys) if n_buys > 0 else 0.0
         for code in buy_candidates:
             if code not in closes:
                 continue

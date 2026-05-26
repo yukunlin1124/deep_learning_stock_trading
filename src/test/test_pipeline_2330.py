@@ -57,7 +57,10 @@ from src.trainer.maml import (
 )
 from src.trainer.incremental import ILConfig, run_incremental
 from src.evaluate.metrics import cross_sectional_ic
-from src.evaluate.backtest import BTConfig, run_backtest_from_predictions
+from src.evaluate.backtest_qlib import (
+    QlibBTConfig as BTConfig,
+    run_qlib_backtest_from_predictions as run_backtest_from_predictions,
+)
 from src.workflow.forecast import forecast_latest
 
 TEST_STOCK = "2330"
