@@ -210,6 +210,7 @@ TEJ TW50.csv / TM100.csv  ─ universe.py ──────┼──> universe 
 
 | File | Contents |
 |---|---|
+| [overview.md](overview.md) | End-to-end training-procedure diagram: three-stage schedule, DoubleAdapt architecture, rolling task window, per-task FOMAML detail, key hyperparameters |
 | [project_structure.md](project_structure.md) | This file — code layout and module map |
 | [model_env.md](model_env.md) | Per-run training log: what changed in the env for each of runs 1-8 and why, plus headline diffs in both backtest engines |
 | [model_performance.md](model_performance.md) | qlib-style metrics (IC, ICIR, RankIC, RankICIR, IR, excess return, max DD) for all 8 runs vs 0050 benchmark |

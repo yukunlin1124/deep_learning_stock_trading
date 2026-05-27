@@ -71,6 +71,7 @@ deep_learning_stock_trading/
 ```
 
 Docs:
+- [docs/overview.md](docs/overview.md) — training-procedure diagram (three-stage schedule + DoubleAdapt architecture + rolling task window + per-task FOMAML)
 - [docs/project_structure.md](docs/project_structure.md) — file-by-file walkthrough
 - [docs/model_env.md](docs/model_env.md) — per-run training log (runs 1-8, what changed in the env each iteration)
 - [docs/model_performance.md](docs/model_performance.md) — qlib-style metrics (IC, ICIR, IR, excess return) vs 0050 benchmark

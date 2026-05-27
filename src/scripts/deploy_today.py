@@ -14,6 +14,13 @@ Causal contract:
      submit Buy_Stock / Sell_Stock at limit prices rounded from (T - 1) close.
    - TWSE will fill iff today's [low, high] covers the limit (project Rule 02).
 
+Cheat mode (--cheat):
+   - Breaks the causal contract by fetching today's intraday OHLC via
+     yfinance (~15 min delayed for free tier) and pricing orders against
+     today's high (for sells) and today's low (for buys). Use for backtest
+     sanity-checking ("what's the best execution we could get today?") —
+     NOT for live trading. Stocks without today's yfinance bar are skipped.
+
 Trading config is loaded from src/output/bt_config.json so it stays
 identical to whatever the backtest used.
 
@@ -269,12 +276,54 @@ def parse_holdings_detail(raw) -> dict[str, dict]:
     return detail
 
 
+def fetch_today_intraday(codes: list[str]) -> dict[str, tuple[float, float]]:
+    """Cheat-mode helper: pull today's intraday OHLC via yfinance (~15 min
+    delayed for the free tier).
+
+    Returns {code: (today_low, today_high)} for stocks that have a valid
+    today bar. Stocks without today's data (delisted, post-IPO blackout,
+    market not open yet, network error, etc.) are omitted — the caller
+    should skip them rather than fall back to prev_close, so that --cheat
+    mode never silently degrades to the regular causal flow.
+    """
+    import yfinance as yf
+    today = datetime.now().date()
+    tomorrow_str = (today.fromordinal(today.toordinal() + 1)).isoformat()
+    tickers = " ".join(f"{c}.TW" for c in codes)
+    df = yf.download(
+        tickers, start=today.isoformat(), end=tomorrow_str,
+        progress=False, auto_adjust=False, group_by="ticker", threads=True,
+    )
+    ranges: dict[str, tuple[float, float]] = {}
+    if df is None or df.empty:
+        return ranges
+    multi = isinstance(df.columns, pd.MultiIndex)
+    for code in codes:
+        try:
+            sub = df[f"{code}.TW"] if multi else df
+            sub = sub.dropna(subset=["Low", "High"])
+            if sub.empty:
+                continue
+            low = float(sub["Low"].iloc[-1])
+            high = float(sub["High"].iloc[-1])
+            if np.isfinite(low) and np.isfinite(high) and 0 < low <= high:
+                ranges[code] = (low, high)
+        except (KeyError, IndexError):
+            continue
+    return ranges
+
+
 @dataclass
 class IntendedOrder:
     side: str          # "BUY" or "SELL"
     code: str
     lots: int
-    price: int         # int per stock_api requirements
+    price: float       # int for the legacy prev-close path; tick-aligned float
+                       # in cheat mode so sub-NT$50 stocks land inside today's
+                       # [low, high] (tick=0.05 there, int rounding loses 95%
+                       # of valid limits and pushes the order outside the
+                       # fillable range).
+    limit_source: str = "prev-close"   # "prev-close" | "cheat-high" | "cheat-low"
 
 
 def plan_orders(
@@ -282,6 +331,7 @@ def plan_orders(
     holdings: dict[str, int],
     bt_cfg: dict,
     cash: float,
+    today_ranges: dict[str, tuple[float, float]] | None = None,
 ) -> list[IntendedOrder]:
     """Plan orders for today.
 
@@ -289,6 +339,15 @@ def plan_orders(
     the course website. Slot per buy is cash * risk_degree / len(buys)
     (conservative: does NOT pre-add expected sell proceeds, unlike the
     qlib backtest which assumes today's sells fill first).
+
+    today_ranges: optional `--cheat` payload from fetch_today_intraday().
+    When provided:
+      - SELL limit = round_buy(today_high)  (rounds DOWN to a valid tick,
+        lands just below today's high, inside [low, high] so it fills).
+      - BUY limit  = round_sell(today_low)  (rounds UP to a valid tick,
+        lands just above today's low, inside [low, high] so it fills).
+    Stocks with no today_ranges entry are skipped — cheat mode is
+    all-or-nothing per stock; we never fall back to prev_close silently.
     """
     top_k = int(bt_cfg.get("top_k", 10))
     cost_alpha = float(bt_cfg.get("cost_alpha_bps", 70.0)) / 1e4
@@ -329,29 +388,53 @@ def plan_orders(
               f"len(buys)={n_buys}  -> slot={slot_capital:,.0f} NT$/name "
               f"(conservative: not assuming today's sells fill)")
 
+    cheat = today_ranges is not None
+
     # SELL first
     for code in sell_candidates:
-        pc = prev_close.get(code)
-        if pc is None or not np.isfinite(pc):
-            continue
-        sell_price = int(round(round_sell(pc)))
         lots = int(holdings[code] // SHARES_PER_LOT)
         if lots <= 0:
             continue
-        orders.append(IntendedOrder("SELL", code, lots, sell_price))
+        if cheat:
+            rng = today_ranges.get(code)
+            if rng is None:
+                print(f"      [cheat-skip SELL] {code}: no yfinance bar today")
+                continue
+            _, today_high = rng
+            sell_price = round(float(round_buy(today_high)), 2)
+            limit_source = "cheat-high"
+        else:
+            pc = prev_close.get(code)
+            if pc is None or not np.isfinite(pc):
+                continue
+            sell_price = int(round(round_sell(pc)))
+            limit_source = "prev-close"
+        if sell_price <= 0:
+            continue
+        orders.append(IntendedOrder("SELL", code, lots, sell_price, limit_source))
 
     # BUY
     for code in buy_candidates:
-        pc = prev_close.get(code)
-        if pc is None or not np.isfinite(pc):
-            continue
-        buy_price = int(round(round_buy(pc)))
+        if cheat:
+            rng = today_ranges.get(code)
+            if rng is None:
+                print(f"      [cheat-skip BUY] {code}: no yfinance bar today")
+                continue
+            today_low, _ = rng
+            buy_price = round(float(round_sell(today_low)), 2)
+            limit_source = "cheat-low"
+        else:
+            pc = prev_close.get(code)
+            if pc is None or not np.isfinite(pc):
+                continue
+            buy_price = int(round(round_buy(pc)))
+            limit_source = "prev-close"
         if buy_price <= 0:
             continue
         lots = int(slot_capital // (buy_price * SHARES_PER_LOT))
         if lots <= 0:
             continue
-        orders.append(IntendedOrder("BUY", code, lots, buy_price))
+        orders.append(IntendedOrder("BUY", code, lots, buy_price, limit_source))
     return orders
 
 
@@ -399,11 +482,13 @@ def submit_orders(orders: list[IntendedOrder], account: str, password: str,
                 print(f"[error] {o.side} {o.code} x{o.lots} @ {o.price}: {e!r}")
                 success = False
         status = "DRY_RUN" if dry_run else ("OK" if success else "FAIL")
-        print(f"  [{status}] {o.side:4s} {o.code} lots={o.lots:3d} price={o.price}")
+        print(f"  [{status}] {o.side:4s} {o.code} lots={o.lots:3d} "
+              f"price={o.price:>7.2f}  [{o.limit_source}]")
         log_rows.append({
             "attempted_at": attempted_at,
             "side": o.side, "code": o.code,
             "lots": o.lots, "price": o.price,
+            "limit_source": o.limit_source,
             "status": status,
         })
     return log_rows
@@ -428,6 +513,12 @@ def main() -> None:
                          "cash * risk_degree / len(buys).")
     ap.add_argument("--run", default=None,
                     help="which output/runN/ to load (default: read output/CURRENT)")
+    ap.add_argument("--cheat", action="store_true",
+                    help="BREAKS THE CAUSAL CONTRACT. Pull today's intraday "
+                         "OHLC via yfinance (~15 min delayed) and place orders "
+                         "at today's high (sells) / today's low (buys) for "
+                         "best-execution sanity-checking. Stocks without "
+                         "today's bar are skipped (no silent fallback).")
     args = ap.parse_args()
     run_dir = resolve_run_dir(args.run)
 
@@ -486,7 +577,18 @@ def main() -> None:
             print(f"      WARNING: Get_User_Stocks returned non-empty {type(raw).__name__} "
                   f"but parsed 0 positions. Sample: {sample}")
     print(f"      current holdings: {len(holdings)} positions")
-    orders = plan_orders(preds, holdings, bt_cfg, cash=args.cash)
+
+    today_ranges: dict[str, tuple[float, float]] | None = None
+    if args.cheat:
+        cheat_codes = sorted(set(holdings.keys()) | set(preds["code"].tolist()))
+        print(f"\n      [cheat] yfinance batched download for {len(cheat_codes)} "
+              f"tickers (~15 min delayed)...")
+        today_ranges = fetch_today_intraday(cheat_codes)
+        print(f"      [cheat] got today's [low, high] for "
+              f"{len(today_ranges)}/{len(cheat_codes)} candidates")
+
+    orders = plan_orders(preds, holdings, bt_cfg, cash=args.cash,
+                         today_ranges=today_ranges)
     print(f"      planned: {sum(1 for o in orders if o.side=='SELL')} sells, "
           f"{sum(1 for o in orders if o.side=='BUY')} buys")
 
