@@ -165,8 +165,15 @@ def main() -> None:
     print(f"  IL window: {start_date} -> {end_date} ({preds['date'].nunique()} dates)")
 
     codes = sorted(preds["stock_code_id"].unique().tolist())
-    print(f"  universe (from predictions): {len(codes)} codes")
-    assert "2330" in codes, "2330 must be in universe (framework uses it as trading-day reference)"
+    # The course framework uses 2330 (TSMC) as its trading-day reference,
+    # so it must be in the framework's bar cache + universe even if the model
+    # never predicts on it (e.g., TM100 backtests where 2330 is in TW50, not TM100).
+    # Predictions themselves still come from pred_lookup, so adding 2330 here
+    # only affects the framework's calendar lookup — not stock selection.
+    if "2330" not in codes:
+        codes = sorted(set(codes) | {"2330"})
+        print(f"  + injected 2330 for framework day-reference")
+    print(f"  universe (from predictions + framework refs): {len(codes)} codes")
 
     pred_lookup: dict[str, dict[str, float]] = {}
     for date, grp in preds.groupby("date"):

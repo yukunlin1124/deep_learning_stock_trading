@@ -175,8 +175,9 @@ def apply_time_varying_universe(panel: PanelTensors, schedule: pd.DataFrame
 def main() -> None:
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--universe", choices=["TW50", "TM100"], default=DEFAULT_UNIVERSE,
-                    help="which TEJ index to use as the time-varying active universe")
+    ap.add_argument("--universe", choices=["TW50", "TM100", "BOTH"], default=DEFAULT_UNIVERSE,
+                    help="which TEJ index to use as the time-varying active universe "
+                         "(BOTH = TW50 ∪ TM100, ~150 stocks/period)")
     args = ap.parse_args()
     universe_name = args.universe
 

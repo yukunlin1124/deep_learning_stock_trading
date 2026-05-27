@@ -9,7 +9,7 @@ Schedule (typical):
 
 Causal contract:
    - Features for prediction use bars through (T - 1)  (yesterday's close).
-   - The model outputs a prediction PER stock (rank-norm 20d forward return).
+   - The model outputs a prediction PER stock (next-day close-to-close return).
    - We pick top-K above the cost-alpha threshold, throttle by n_drop, then
      submit Buy_Stock / Sell_Stock at limit prices rounded from (T - 1) close.
    - TWSE will fill iff today's [low, high] covers the limit (project Rule 02).

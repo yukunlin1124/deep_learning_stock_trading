@@ -72,7 +72,7 @@ pre-filter**:
         ▼
    Active 50-stock universe (TOP_N = 50)
         │
-        ├── Stage 2: model predicts 20-day forward return per stock
+        ├── Stage 2: model predicts next-day close-to-close return per stock
         │             top_k by pred above 70 bps threshold
         ▼
    Actual long basket (top_k positions held)

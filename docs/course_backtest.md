@@ -33,18 +33,19 @@ causality as [deploy_today.py](../src/scripts/deploy_today.py).
 
 ## Cross-run comparison
 
-All 7 runs evaluated on the **operational window 2024-01-02 → 2026-04-23**
+All 8 runs evaluated on the **operational window 2024-01-02 → 2026-04-23**
 (555 trading days), initial cash NT$100M (framework units = 100k):
 
-| Run | Cum return | Final equity | Notes |
-|---|---:|---:|---|
-| run1 | +59.3% | NT$ 159.3M | qlib defaults baseline |
-| run2 | +100.7% | NT$ 200.7M | + tuned pretrain |
-| run3 | +112.2% | NT$ 212.2M | + longer pretrain |
-| run4 | +124.4% | NT$ 224.4M | + 2022-2023 IL warmup |
-| **run5** | **+135.3%** | **NT$ 235.3M** | + clean held-out val |
-| run6 | +76.0% | NT$ 176.0M | TEJ cache + monthly TW50 mask |
-| **run7** | **+124.0%** | **NT$ 224.0M** | + live-IL backtest flow (predictions generated during the qlib backtest, not as a separate pre-pass) |
+| Run | Universe | Cum return | Final equity | Notes |
+|---|---|---:|---:|---|
+| run1 | TW50-era | +59.3% | NT$ 159.3M | qlib defaults baseline |
+| run2 | TW50-era | +100.7% | NT$ 200.7M | + tuned pretrain |
+| run3 | TW50-era | +112.2% | NT$ 212.2M | + longer pretrain |
+| run4 | TW50-era | +124.4% | NT$ 224.4M | + 2022-2023 IL warmup |
+| **run5** | TW50-era | **+135.3%** | **NT$ 235.3M** | + clean held-out val |
+| run6 | TW50 | +76.0% | NT$ 176.0M | TEJ cache + monthly TW50 mask |
+| **run7** | TW50 | **+124.0%** | **NT$ 224.0M** | + live-IL backtest flow (predictions generated during the qlib backtest, not as a separate pre-pass) |
+| run8 | **TM100** | +55.4% | NT$ 155.4M | --universe TM100 (100-stock mid-cap mask, 24 codes auto-injected for the framework's 2330 day-reference) |
 
 ### Full-IL view (2022-01 → 2026-04, 1,040 days)
 
@@ -145,6 +146,7 @@ per-run Excel output to `src/output/{run}/course_backtest.xlsx`.
 
 ## Related
 
-- [model.md](model.md) — what changed in each run (the inputs to this table)
+- [model_env.md](model_env.md) — what changed in each run (the inputs to this table)
+- [model_performance.md](model_performance.md) — qlib-style metrics (IC, ICIR, IR, excess return) vs 0050 benchmark
 - [qlib_backtest.md](qlib_backtest.md) — the other backtest engine (TWSE costs + per-day equity)
 - [auto_trader.md](auto_trader.md) — daily deploy pipeline (same causal pattern as this engine)

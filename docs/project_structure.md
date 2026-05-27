@@ -211,7 +211,8 @@ TEJ TW50.csv / TM100.csv  ─ universe.py ──────┼──> universe 
 | File | Contents |
 |---|---|
 | [project_structure.md](project_structure.md) | This file — code layout and module map |
-| [model.md](model.md) | Per-run training log: what changed in each of runs 1-6 and why, plus headline diffs in both backtest engines |
+| [model_env.md](model_env.md) | Per-run training log: what changed in the env for each of runs 1-8 and why, plus headline diffs in both backtest engines |
+| [model_performance.md](model_performance.md) | qlib-style metrics (IC, ICIR, RankIC, RankICIR, IR, excess return, max DD) for all 8 runs vs 0050 benchmark |
 | [qlib_backtest.md](qlib_backtest.md) | In-process qlib-style backtest engine — TWSE costs, `deal_price=close`, cross-run comparison table, tunable knobs |
 | [course_backtest.md](course_backtest.md) | Course `BacktestSystem` bridge — zero costs, 1-day causal lag, leaderboard upload |
 | [auto_trader.md](auto_trader.md) | Daily `deploy_today.py` pipeline + scheduling guide |

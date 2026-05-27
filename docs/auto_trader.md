@@ -219,4 +219,4 @@ This means:
 | Each trading day | `deploy_today.py --cash NT$X` at 12:00 | Submit fresh orders for the day |
 | Weekly / monthly | Drop fresh TEJ half-year CSV into `src/data/stock_data_all/`, run `import_tej.py` | Keep cache current; TEJ doesn't have a daily delta export |
 | Every ~20 trading days | Re-run `train.py` | Roll one more FOMAML bi-level update into the model |
-| Every quarter | TW50/TM100 mask refresh — TEJ publishes a new monthly snapshot in `TW50.csv` / `TM100.csv`; just replace the file | Match TEJ's official rebalance schedule (see [model.md](model.md)) |
+| Every quarter | TW50/TM100 mask refresh — TEJ publishes a new monthly snapshot in `TW50.csv` / `TM100.csv`; just replace the file | Match TEJ's official rebalance schedule (see [model_env.md](model_env.md)) |

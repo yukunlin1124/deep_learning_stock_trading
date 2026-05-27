@@ -79,12 +79,41 @@ def _parse_tej_index_csv(path: Path) -> tuple[dict[pd.Timestamp, list[str]],
 
 
 def _get_index_history(index_name: str) -> dict[pd.Timestamp, list[str]]:
-    """Return cached {snapshot_date -> [codes]} for one of the known indices."""
+    """Return cached {snapshot_date -> [codes]} for one of the known indices.
+
+    Built-in names: "TW50", "TM100", "BOTH".
+      "BOTH" = synthetic per-snapshot union of TW50 ∪ TM100 (~150 stocks/period;
+      represents the FTSE TWSE 50 + TWSE Mid-Cap 100 combined = the top 150
+      most-tradeable TWSE common stocks per FTSE methodology).
+    """
     if index_name in _index_state_caches:
         return _index_state_caches[index_name]
+
+    if index_name == "BOTH":
+        tw50 = _get_index_history("TW50")
+        tm100 = _get_index_history("TM100")
+        all_dates = sorted(set(tw50.keys()) | set(tm100.keys()))
+        state: dict[pd.Timestamp, list[str]] = {}
+        weights: dict[pd.Timestamp, dict[str, float]] = {}
+        for d in all_dates:
+            state[d] = sorted(set(tw50.get(d, [])) | set(tm100.get(d, [])))
+            # Concat weights (TW50 + TM100 don't overlap by FTSE methodology),
+            # then renormalize so they still sum to 1.0 over the combined set.
+            w = {}
+            w.update(_index_weight_caches.get("TW50", {}).get(d, {}))
+            w.update(_index_weight_caches.get("TM100", {}).get(d, {}))
+            total = sum(w.values())
+            if total > 0:
+                w = {c: v / total for c, v in w.items()}
+            weights[d] = w
+        _index_state_caches["BOTH"] = state
+        _index_weight_caches["BOTH"] = weights
+        return state
+
     path = _INDEX_PATHS.get(index_name)
     if path is None:
-        raise ValueError(f"unknown index {index_name!r}; expected one of {list(_INDEX_PATHS)}")
+        raise ValueError(f"unknown index {index_name!r}; "
+                         f"expected one of {list(_INDEX_PATHS) + ['BOTH']}")
     if not path.exists():
         raise FileNotFoundError(f"missing TEJ index CSV: {path}")
     state, weights = _parse_tej_index_csv(path)

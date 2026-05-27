@@ -72,7 +72,8 @@ deep_learning_stock_trading/
 
 Docs:
 - [docs/project_structure.md](docs/project_structure.md) — file-by-file walkthrough
-- [docs/model.md](docs/model.md) — per-run training log (runs 1-6, what changed each iteration)
+- [docs/model_env.md](docs/model_env.md) — per-run training log (runs 1-8, what changed in the env each iteration)
+- [docs/model_performance.md](docs/model_performance.md) — qlib-style metrics (IC, ICIR, IR, excess return) vs 0050 benchmark
 - [docs/qlib_backtest.md](docs/qlib_backtest.md) — in-process qlib backtest engine
 - [docs/course_backtest.md](docs/course_backtest.md) — course-framework backtest + leaderboard upload
 - [docs/auto_trader.md](docs/auto_trader.md) — daily deploy schedule
@@ -163,7 +164,7 @@ $env:TWSE_ACCOUNT="..."; $env:TWSE_PASSWORD="..."
 | `pretrain_log.csv` | Per-epoch train loss + val IC/RankIC |
 | `warmup_log.csv` | Per-step IL stats for the 2022-2023 warmup phase |
 | `il_log.csv` | Per-step IL stats for the 2024+ live-IL backtest phase |
-| `predictions.csv` | Per-(date, stock) predicted vs actual 20-day forward return |
+| `predictions.csv` | Per-(date, stock) predicted vs actual next-day close-to-close return |
 | `equity.csv` | Daily portfolio equity over the IL window (qlib backtest) |
 | `trades.csv` | Every fill (date, code, side, price, lots, cashflow) |
 | `backtest_daily.csv` | Per-day cash / mark-value / position count |

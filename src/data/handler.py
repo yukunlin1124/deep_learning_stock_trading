@@ -7,7 +7,12 @@ Each field at lag d in [59, 58, ..., 1, 0] is normalized by the lag-0 value:
     feature = field[t-d] / field[t]
 The result reshapes naturally to (60, 6) for a sequence model.
 
-Label: 20-day forward return on close.
+Label: next-day close-to-close return.
+    label[t] = close[t + 1] / close[t] - 1.0
+This matches the DoubleAdapt paper's spec — the model predicts a single
+1-day forward return; the 20-day cadence elsewhere in the pipeline
+(FOMAMLConfig.r) is the *task interval* (= deployment window between
+meta-updates), NOT the label horizon.
 
 build_panel(bars) returns a PanelTensors with:
     X     : (N, 60, 6) float32
@@ -25,7 +30,7 @@ import pandas as pd
 SEQ_LEN = 60
 N_FIELDS = 6
 FEATURE_DIM = SEQ_LEN * N_FIELDS  # 360
-LABEL_HORIZON = 20
+LABEL_HORIZON = 1
 
 FIELDS = ["close", "open", "high", "low", "vwap", "volume"]
 
@@ -33,7 +38,7 @@ FIELDS = ["close", "open", "high", "low", "vwap", "volume"]
 def compute_alpha360(df: pd.DataFrame, label_h: int = LABEL_HORIZON) -> pd.DataFrame:
     """Build per-stock Alpha360 frame.
     df columns required: date, open, high, low, close, capacity, turnover.
-    Returns DataFrame with columns: date, stock_code_id, X, y_fwd20.
+    Returns DataFrame with columns: date, stock_code_id, X, y_fwd.
     Rows with insufficient history are dropped.
     """
     df = df.sort_values("date").reset_index(drop=True).copy()
@@ -49,7 +54,7 @@ def compute_alpha360(df: pd.DataFrame, label_h: int = LABEL_HORIZON) -> pd.DataF
     fields_arr = np.stack([c, o, h, lo, vwap, cap], axis=1)  # (T, 6)
     T = fields_arr.shape[0]
     if T < SEQ_LEN + label_h:
-        return pd.DataFrame(columns=["date", "stock_code_id", "X", "y_fwd20"])
+        return pd.DataFrame(columns=["date", "stock_code_id", "X", "y_fwd"])
 
     label = np.full(T, np.nan, dtype=float)
     label[: T - label_h] = c[label_h:] / c[: T - label_h] - 1.0
@@ -71,7 +76,7 @@ def compute_alpha360(df: pd.DataFrame, label_h: int = LABEL_HORIZON) -> pd.DataF
             "date": dates[t],
             "stock_code_id": code,
             "X": X.astype(np.float32),
-            "y_fwd20": float(y) if np.isfinite(y) else np.nan,
+            "y_fwd": float(y) if np.isfinite(y) else np.nan,
         })
     return pd.DataFrame(out_rows)
 
@@ -121,7 +126,7 @@ def build_panel(bars: dict[str, pd.DataFrame],
     panel = pd.concat(pieces, ignore_index=True)
     panel = panel.sort_values(["date", "stock_code_id"]).reset_index(drop=True)
     X = np.stack(panel["X"].values, axis=0).astype(np.float32)
-    y = panel["y_fwd20"].astype(np.float32).values
+    y = panel["y_fwd"].astype(np.float32).values
     dates = pd.to_datetime(panel["date"]).values
     codes = panel["stock_code_id"].astype(str).values
     return PanelTensors(X=X, y=y, dates=dates, codes=codes)
