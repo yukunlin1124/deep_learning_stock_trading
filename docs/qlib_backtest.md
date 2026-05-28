@@ -26,7 +26,7 @@ Both share the same portfolio simulation rules and `QlibBTConfig`.
 | Costs | configurable: `"qlib"` (CN A-share defaults) or `"twse"` (0.1425% × 2 + 0.3% tax + NT$20 min) |
 | Slot sizing | qlib exact: `cash * risk_degree / len(buys)` post-sell |
 | Limit-up/down block | `limit_threshold=0.095` (skip days where a stock is locked at ±9.5% from prev close) |
-| **Live-IL adaptation** | Every `fcfg.r=20` trading days, one FOMAML bi-level step on the past 20-day support window. Model state at trade time D reflects everything it adapted through D − 20. |
+| **Live-IL adaptation** | Every `fcfg.r=20` trading days, one FOMAML bi-level step on the past 20-day train window. Model state at trade time D reflects everything it adapted through D − 20. |
 | Output | Live-IL: `(BTResult, step_log_df, predictions_df)`. Replay: `BTResult` only. |
 
 ## Default config (matches `train.py` and `deploy_today.py`)
@@ -45,23 +45,39 @@ QlibBTConfig(
 
 ## Cross-run comparison
 
-All 10 runs evaluated under the **same** config above, **same** window
+All 14 runs evaluated under the **same** config above, **same** window
 (2024-01-01 → 2026-04-30 ≈ 560 trading days, the operational period common
 to every run's `predictions.csv`), **same** bars (current TEJ-adjusted
 cache):
 
 | Run | Label h | Universe | Mode | Trades | **Cum return** | **Sharpe** | **Max DD** | Win % | PF | Final equity |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|
-| run1 | 20d | TW50-era | replay | 1,114 | +92.4% | +1.095 | −38.6% | 54.0 | 1.56 | 192.4M |
-| run2 | 20d | TW50-era | replay | 1,114 | +147.4% | +1.373 | −45.5% | 51.4 | 1.94 | 247.4M |
-| **run3** | 20d | TW50-era | replay | 1,118 | **+204.8%** | +1.661 | −36.4% | 56.0 | 2.11 | **304.8M** |
-| run4 | 20d | TW50-era | replay | 1,110 | +131.4% | +1.427 | −40.7% | 52.0 | 1.97 | 231.4M |
-| run5 | 20d | TW50-era | replay | 1,116 | +158.9% | +1.426 | −43.7% | 55.2 | 1.98 | 258.9M |
-| run6 | 20d | TW50 | replay | 1,118 | +94.4% | **+1.520** | −19.3% | 53.1 | 2.02 | 194.4M |
-| **run7** | 20d | TW50 | **live-IL** | 1,116 | +79.0% | +1.367 | −18.1% | 51.4 | 1.94 | 179.0M |
-| **run8** | 20d | **TM100** | **live-IL** | 1,106 | +60.1% | +0.856 | −33.6% | 46.9 | 1.57 | 160.1M |
-| **run9** | **1d** | TW50 | **live-IL** | 1,128 | +56.7% | +1.242 | **−14.1%** | **59.4** | 2.10 | 156.7M |
-| run10 | 1d | **BOTH** | **live-IL** | 1,126 | +46.4% | +0.986 | **−14.0%** | 57.9 | 1.79 | 146.4M |
+| run1 | 20d | TW50-era | replay | 1,114 | +88.5% | +1.066 | −38.6% | 54.0 | 1.56 | 188.2M |
+| run2 | 20d | TW50-era | replay | 1,114 | +147.7% | +1.373 | −45.5% | 51.4 | 1.94 | 247.4M |
+| **run3** | 20d | TW50-era | replay | 1,118 | **+205.2%** | **+1.661** | −36.4% | 56.0 | **2.11** | **304.8M** |
+| run4 | 20d | TW50-era | replay | 1,110 | +131.7% | +1.427 | −40.7% | 52.0 | 1.97 | 231.4M |
+| run5 | 20d | TW50-era | replay | 1,116 | +156.8% | +1.417 | −43.6% | 55.2 | 1.98 | 256.5M |
+| run6 | 20d | TW50 | replay | 1,118 | +94.7% | +1.520 | −19.3% | 53.1 | 2.02 | 194.4M |
+| **run7** | 20d | TW50 | **live-IL** | 1,116 | +79.2% | +1.367 | −18.1% | 51.4 | 1.94 | 179.0M |
+| run8 | 20d | **TM100** | **live-IL** | 1,106 | +58.7% | +0.842 | −33.6% | 46.9 | 1.58 | 158.5M |
+| **run9** | **1d** | TW50 | **live-IL** | 1,128 | +56.9% | +1.242 | **−14.1%** | **59.4** | 2.10 | 156.7M |
+| run10 | 1d | **BOTH** | **live-IL** | 1,126 | +46.6% | +0.986 | **−14.0%** | 57.9 | 1.79 | 146.4M |
+| run11 | 1d | TW50 | live-IL **no-CSRankNorm** | 566 | +17.8% | +0.425 | −39.9% | 53.4 | 1.64 | 117.8M |
+| run12 | 1d | TW50 | live-IL **no best-state restore** | 1,124 | +42.2% | +0.822 | −31.7% | 54.9 | 1.70 | 142.0M |
+| run13 | 1d | TW50 | live-IL **patience=16** | 1,128 | +56.9% | +1.242 | −14.1% | 59.4 | 2.10 | 156.7M |
+| run14 | 1d | TW50 | live-IL **r=5 task span** | 1,156 | +26.4% | +0.627 | −27.7% | 59.0 | 1.69 | 126.2M |
+
+> **Table refreshed 2026-05-28**. Numbers re-derived by replaying every
+> run's `predictions.csv` through the current `run_qlib_backtest_from_predictions`
+> with current TEJ-adjusted bars (181 unique codes — union of TW50,
+> TM100, and the TW50-era curated 150-stock pool). Previous version of
+> this table had stale numbers for runs 1-5 because the earlier
+> cross-run replay used a smaller bars set that skipped some TW50-era
+> prediction codes. Runs 6+ are essentially unchanged (~1pp drift)
+> because they were already from the post-rewrite era. `equity.csv` and
+> `trades.csv` for every run were rewritten by this refresh — the
+> tables in [model_performance.md](model_performance.md) and
+> [model_env.md](model_env.md) reflect the same source-of-truth.
 
 **Run 9 replay-mode cross-check**: re-running run9's `predictions.csv`
 through `run_qlib_backtest_from_predictions` produces cum +56.76% /
@@ -90,11 +106,11 @@ smallest drawdown of any run).
 
 | Lens | Winner |
 |---|---|
-| Highest absolute return | **run3** (+204.8%, TW50-era, replay) |
-| Highest Sharpe | **run6** (+1.520, TW50, replay) |
-| Smallest drawdown | **run9 / run10** tie at −14.0% (both 1-day label, live-IL) — beats run7's −18.1% by 4 pp |
-| Largest profit factor | run3 (2.11, replay) — run9 close behind at 2.10 |
-| Best win rate | **run9** (59.4%, TW50, 1-day label) — paper-faithful 1d horizon trades hit at a higher rate |
+| Highest absolute return | **run3** (+205.2%, TW50-era, replay) |
+| Highest Sharpe | **run3** (+1.661) narrowly ahead of **run6** (+1.520, TW50, replay) |
+| Smallest drawdown | **run9 / run10 / run13** tie at ~−14% (all 1-day label, live-IL) — beats run7's −18.1% by 4 pp |
+| Largest profit factor | **run3** (2.11, replay) — run9 / run13 tied at 2.10 |
+| Best win rate | **run9 / run13** (59.4%, TW50, 1-day label) — paper-faithful 1d horizon trades hit at a higher rate |
 | Best RankICIR | **run10** (0.41, BOTH universe, 1-day label) — wider universe ranks more consistently even when raw IC is weaker |
 | **Methodologically most honest** | **run9** (TW50, live-IL, 1-day label — paper-faithful spec; model genuinely adapts during the backtest; 1-day labels are fully observable next-day so no IL leakage) |
 
@@ -168,7 +184,7 @@ run, load `final_prep.pt` and call the function directly:
 ```python
 import torch
 from src.data.io import fetch_range
-from src.data.handler import build_panel, LABEL_HORIZON
+from src.data.handler import build_panel, PRED_HORIZON
 from src.data.processor import apply_robust_zscore, fillna
 from src.data.universe import get_index_universe_codes
 from src.model.double_adapt import DoubleAdapt
@@ -185,7 +201,7 @@ norm = pickle.load(open("src/output/run6/norm_stats.pkl", "rb"))
 bars = {c: fetch_range(c, "2022-01-01", "2026-05-31")
         for c in get_index_universe_codes("TW50")}
 bars = {c: b for c, b in bars.items() if not b.empty}
-panel = build_panel(bars, label_h=LABEL_HORIZON)
+panel = build_panel(bars, pred_h=PRED_HORIZON)
 panel.X = fillna(apply_robust_zscore(panel.X, norm))
 
 bt, step_log, preds = run_qlib_backtest_with_il(

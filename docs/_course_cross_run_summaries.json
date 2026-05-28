@@ -1,0 +1,58 @@
+{
+  "run1": {
+    "cum_return_pct": 58.67,
+    "final_equity_nt$M": 158.668
+  },
+  "run2": {
+    "cum_return_pct": 95.06,
+    "final_equity_nt$M": 195.0645
+  },
+  "run3": {
+    "cum_return_pct": 114.08,
+    "final_equity_nt$M": 214.0763
+  },
+  "run4": {
+    "cum_return_pct": 147.84,
+    "final_equity_nt$M": 247.843
+  },
+  "run5": {
+    "cum_return_pct": 99.77,
+    "final_equity_nt$M": 199.7728
+  },
+  "run6": {
+    "cum_return_pct": 76.0,
+    "final_equity_nt$M": 175.9975
+  },
+  "run7": {
+    "cum_return_pct": 124.01,
+    "final_equity_nt$M": 224.0128
+  },
+  "run8": {
+    "cum_return_pct": 55.38,
+    "final_equity_nt$M": 155.3759
+  },
+  "run9": {
+    "cum_return_pct": 49.48,
+    "final_equity_nt$M": 149.47785
+  },
+  "run10": {
+    "cum_return_pct": 37.14,
+    "final_equity_nt$M": 137.1436
+  },
+  "run11": {
+    "cum_return_pct": 11.44,
+    "final_equity_nt$M": 111.442
+  },
+  "run12": {
+    "cum_return_pct": 35.66,
+    "final_equity_nt$M": 135.66425
+  },
+  "run13": {
+    "cum_return_pct": 49.48,
+    "final_equity_nt$M": 149.47785
+  },
+  "run14": {
+    "cum_return_pct": 40.05,
+    "final_equity_nt$M": 140.0509
+  }
+}

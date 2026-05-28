@@ -8,9 +8,9 @@ how that change moved the metrics.
 For methodology details on the two evaluation engines, see
 [qlib_backtest.md](qlib_backtest.md) and [course_backtest.md](course_backtest.md).
 
-> **Label horizon note.** Runs 1-8 were trained with `LABEL_HORIZON = 20`
+> **Prediction horizon note.** Runs 1-8 were trained with `PRED_HORIZON = 20`
 > (20-day forward close-to-close return). On 2026-05-27 the handler was
-> switched to `LABEL_HORIZON = 1` (next-day close-to-close return) to
+> switched to `PRED_HORIZON = 1` (next-day close-to-close return) to
 > match the DoubleAdapt paper's spec — the model predicts a single
 > 1-day forward return; the 20-day cadence elsewhere in the pipeline
 > (`FOMAMLConfig.r`) is the **task interval** (deployment window between
@@ -32,31 +32,51 @@ For methodology details on the two evaluation engines, see
 | **6** | 2026-05-26 | **bars: yfinance/TWSE-direct → TEJ-adjusted** + **universe mask: Wikipedia (32 quarterly changes) → official TW50.csv (184 month-end snapshots)** | Data-quality upgrade — official source for universe, consistent split+dividend adjustment for prices |
 | **7** | 2026-05-27 | **flow split**: warmup IL → `final_prep.pt`; **live-IL qlib backtest** (Stage 3) walks 2024+ doing adapt + portfolio-sim in tandem → `final.pt`. Predictions in `predictions.csv` are now strictly 2024+. | Match deploy-time behavior in the backtest itself — model continues fine-tuning during the 2024+ window, same as live trading would |
 | **8** | 2026-05-27 | `--universe TW50 → TM100` (50 large-caps → 100 mid-caps; otherwise identical to run7) | Test whether a wider, less-liquid universe gives the model more signal to learn from |
-| **9** | 2026-05-27 | **`LABEL_HORIZON 20 → 1`** (next-day c2c return; universe back to TW50; otherwise identical to run7) | Match the DoubleAdapt paper's spec — the model predicts a single 1-day forward return, and the 20-day cadence is the FOMAML *task interval*, not the label horizon. Also closes the live-IL label-leakage that the 20-day horizon implied (with horizon=1, the most recent support label is observable the next day) |
+| **9** | 2026-05-27 | **`PRED_HORIZON 20 → 1`** (next-day c2c return; universe back to TW50; otherwise identical to run7) | Match the DoubleAdapt paper's spec — the model predicts a single 1-day forward return, and the 20-day cadence is the FOMAML *task interval*, not the prediction horizon. Also closes the live-IL label-leakage that the 20-day horizon implied (with horizon=1, the most recent support label is observable the next day) |
 | **10** | 2026-05-27 | `--universe TW50 → BOTH` (TW50 ∪ TM100, ~150 stocks/period, 269 candidate codes; otherwise identical to run9) | Test whether the combined large-cap + mid-cap universe under the 1-day-label regime gives the model more signal than TW50 alone — completes the universe ablation matrix (TW50 / TM100 / BOTH) under both label horizons |
+| **11** | 2026-05-27 | `back to TW50` + **`strip CSRankNorm from fomaml_step`** (paper-faithful: H operates on raw y; L_train/L_test/L_reg all compare against raw next-day c2c returns; LRs unchanged from run9) | Test the largest deviation from the paper flagged in [overview.md](overview.md) — does paper-faithful raw-y training beat the qlib stability fork? |
+| **12** | 2026-05-28 | **disable `model.load_state_dict(best_state)`** at end of pretrain (CSRankNorm restored from run11 ablation; otherwise identical to run9) | Test how load-bearing the "restore to best-IC epoch after early stop" mechanism is — does Stage 2 + 3 recover from a degraded post-early-stop init, or does the warmup IL budget get burned on recovery? |
+| **13** | 2026-05-28 | **`PretrainConfig.early_stop_patience` 8 → 16** (best-state restore re-enabled; otherwise identical to run9) | Test whether longer patience finds a better val-IC peak deeper in pretrain. Same seed/data as run9, so first 9 epochs are bit-identical; pretrain now runs to epoch 17 instead of stopping at epoch 9. |
+| **14** | 2026-05-28 | **`FOMAMLConfig.r` 20 → 5** (task span 4× shorter; warmup IL 25 → 97 steps, live-IL 28 → 115 steps; patience restored to 8; otherwise identical to run9) | Test whether more frequent meta-updates (smaller deployment window between fine-tunes) helps the model track regime changes better |
 
 Each row is a strict superset of the prior row's fixes (i.e. once we
-adopted `n_drop=1` in run 2, all subsequent runs kept it).
+adopted `n_drop=1` in run 2, all subsequent runs kept it). **Exception**:
+run11 is an *ablation* against run9 (CSRankNorm only). For deploy, run9
+remains the recommendation — see Run 11 detail below for why.
 
 ## Headline diffs (both backtest engines, operational window 2024-01 → 2026-05)
 
 | Run | Label h | Universe | Mode | qlib cum_ret | qlib Sharpe | qlib MDD | course cum_ret |
 |---|---|---|---|---:|---:|---:|---:|
-| run1 | 20d | TW50-era | replay | +92.4% | 1.095 | −38.6% | +59.3% |
-| run2 | 20d | TW50-era | replay | +147.4% | 1.373 | −45.5% | +100.7% |
-| **run3** | 20d | TW50-era | replay | **+204.8%** | 1.661 | −36.4% | +112.2% |
-| run4 | 20d | TW50-era | replay | +131.4% | 1.427 | −40.7% | +124.4% |
-| run5 | 20d | TW50-era | replay | +158.9% | 1.426 | −43.7% | **+135.3%** |
-| **run6** | 20d | TW50 | replay | +94.4% | **+1.520** | −19.3% | +76.0% |
-| **run7** | 20d | TW50 | live-IL | +79.0% | +1.367 | −18.1% | +124.0% |
-| run8 | 20d | **TM100** | live-IL | +60.1% | +0.856 | −33.6% | +55.4% |
-| **run9** | **1d** | TW50 | live-IL | +56.7% | +1.242 | **−14.07%** | TBD |
-| run10 | 1d | **BOTH** | live-IL | +46.4% | +0.986 | **−14.01%** | TBD |
+| run1 | 20d | TW50-era | replay | +88.5% | +1.066 | −38.6% | +58.7% |
+| run2 | 20d | TW50-era | replay | +147.7% | +1.373 | −45.5% | +95.1% |
+| **run3** | 20d | TW50-era | replay | **+205.2%** | **+1.661** | −36.4% | +114.1% |
+| **run4** | 20d | TW50-era | replay | +131.7% | +1.427 | −40.7% | **+147.8%** |
+| run5 | 20d | TW50-era | replay | +156.8% | +1.417 | −43.6% | +99.8% |
+| **run6** | 20d | TW50 | replay | +94.7% | **+1.520** | −19.3% | +76.0% |
+| **run7** | 20d | TW50 | live-IL | +79.2% | +1.367 | −18.1% | +124.0% |
+| run8 | 20d | **TM100** | live-IL | +58.7% | +0.842 | −33.6% | +55.4% |
+| **run9** | **1d** | TW50 | live-IL | +56.9% | +1.242 | **−14.07%** | +49.5% |
+| run10 | 1d | **BOTH** | live-IL | +46.6% | +0.986 | **−14.01%** | +37.1% |
+| run11 | 1d | TW50 (no-CSRankNorm) | live-IL | +17.8% | +0.425 | −39.91% | +11.4% |
+| run12 | 1d | TW50 (no best-state restore) | live-IL | +42.2% | +0.822 | −31.66% | +35.7% |
+| run13 | 1d | TW50 (patience=16) | live-IL | +56.9% | +1.242 | −14.07% | +49.5% |
+| run14 | 1d | TW50 (r=5 task span) | live-IL | +26.4% | +0.627 | −27.7% | +40.1% |
+
+> **Tables refreshed 2026-05-28** — re-replayed every run through the
+> current qlib + course engines with unified 181-code bars. Previous
+> course numbers for runs 1-5 were stale (different framework state +
+> different bar coverage). New cum-return leader on course backtest:
+> **run4** (+147.8%); qlib leader stays **run3** (+205.2%).
 
 Different leaders by metric:
 - Max absolute return: **run3** (qlib) / **run5** (course)
 - Best Sharpe: **run6**
-- Smallest drawdown: **run9 / run10 tie** at ~−14% (both 1-day label, live-IL — wide gap to run7's −18.1%)
+- Smallest drawdown: **run9 / run10 / run13 tie** at ~−14% (both 1-day label, live-IL — wide gap to run7's −18.1%)
+- Largest regression in a controlled ablation: **run11** (strip CSRankNorm without rescaling LRs → Sharpe halves, MDD nearly triples vs run9)
+- Second-largest regression: **run12** (skip best-state restore after early stop → Stage 2+3 burn adapt budget on recovery, MDD doubles vs run9)
+- Zero-effect ablation: **run13** (patience 8 → 16 → 8 extra pretrain epochs but bit-identical to run9 downstream because val IC never beat epoch-1 peak; pure GPU-time waste)
+- Counter-intuitive ablation: **run14** (task span 20 → 5 → trains 2× faster + 11% higher pretrain val IC but Sharpe halves and MDD doubles — more reactive predictions hurt the live strategy)
 
 ## Per-run detail
 
@@ -196,8 +216,8 @@ deeper drawdowns.
 
 | Diff vs run 7 | Why |
 |---|---|
-| **`LABEL_HORIZON = 20 → 1`** (next-day c2c return instead of 20-day forward c2c) | Match the DoubleAdapt paper's spec — the model predicts a single 1-day forward return; the 20-day cadence is the FOMAML *task interval* (deployment window between meta-updates), not the label horizon |
-| **Closes the live-IL label leakage** that the 20-day horizon implied | With horizon=20, at trading day T the support window used labels through `y[T]` = `c[T+20]/c[T]−1`, which needs prices that don't exist for 20 more days. With horizon=1, the most recent support label is observable the next day. |
+| **`PRED_HORIZON = 20 → 1`** (next-day c2c return instead of 20-day forward c2c) | Match the DoubleAdapt paper's spec — the model predicts a single 1-day forward return; the 20-day cadence is the FOMAML *task interval* (deployment window between meta-updates), not the prediction horizon |
+| **Closes the live-IL label leakage** that the 20-day horizon implied | With horizon=20, at trading day T the train window used labels through `y[T]` = `c[T+20]/c[T]−1`, which needs prices that don't exist for 20 more days. With horizon=1, the most recent train label is observable the next day. |
 | Universe back to TW50 (from run8's TM100); all other hyperparameters identical to run7 | Isolate the label-horizon effect; TW50 = the proven-best universe per run7 |
 
 **Effect:**
@@ -268,7 +288,190 @@ The universe ablation matrix is now complete:
 run10 but with stronger absolute return and a 9× faster training
 cycle for monthly retraining.
 
-## Counter-intuitive findings (across the 10 runs)
+### Run 11 — strip CSRankNorm (paper-faithful ablation)
+
+| Diff vs run 9 | Why |
+|---|---|
+| **Strip `csrank_normalize_per_date(y)` from `fomaml_step`** at [src/trainer/maml.py:115-116](../src/trainer/maml.py#L115) — H now operates on raw next-day c2c returns directly | Paper-faithful: the DoubleAdapt paper's L_train, L_test, L_reg all compare predictions against raw y. CSRankNorm was a qlib stability trick added during the qlib port — see deviation #5 in [overview.md](overview.md) |
+| LRs **unchanged** from run9 (`lr_phi=lr_psi=1e-3`, `inner_lr=1e-3`) | Isolate the CSRankNorm effect from the LR-rescaling effect (those would need ~100-360× larger LRs to keep gradient magnitudes meaningful) |
+| Universe back to TW50; all other hyperparameters and the live-IL flow identical to run9 | Single-variable ablation |
+
+**Effect:**
+
+| Metric | Run 9 (CSRankNorm) | Run 11 (raw y) | Δ |
+|---|---:|---:|---:|
+| Pretrain best val IC | **0.051** | 0.050 | −0.001 (Adam's per-param variance norm absorbs the 360× loss-scale shrink) |
+| IL overall IC | **0.046** | 0.022 | −52% |
+| IL overall RankIC | **0.067** | 0.023 | −66% |
+| IL overall RankICIR | **0.326** | 0.111 | −66% |
+| qlib cum return | **+56.7%** | +17.8% | −38.9 pp |
+| qlib Sharpe | **+1.24** | +0.43 | −0.81 |
+| qlib MDD | **−14.07%** | **−39.91%** | −25.8 pp (worse) |
+| Win rate | **59.4%** | 51.6% | −7.8 pp |
+| Trades | 1128 | **566** (half) | raw-y preds in ±0.01-0.05 mostly fail to clear cost_alpha_bps=70 (= 0.007) threshold |
+
+**Three mechanisms behind the regression:**
+
+1. **Adam saves the pretrain.** Per-parameter gradient-variance
+   normalization absorbs the ~360× loss-scale shrink, so val IC peaks
+   nearly identically to run9.
+2. **The FOMAML inner step collapses to a no-op.** The inner step is
+   plain SGD with `inner_lr=1e-3`; with L_train shrunk ~360×, the
+   inner gradient × inner_lr is essentially zero, so `θ ≈ φ` for every
+   task. DoubleAdapt's per-task adaptation — the whole point of the
+   bi-level structure — stops working.
+3. **The cost_alpha_bps threshold becomes too restrictive.** Predictions
+   in raw return space cluster around ±0.01-0.05; the threshold at
+   0.007 now sits near the median rather than the ~60th percentile in
+   CSRankNorm space. Half the days have no eligible buy candidate, so
+   the portfolio doesn't react to changing market state — explains the
+   massive drawdown widening.
+
+**Lesson confirmed**: removing CSRankNorm without rescaling LRs and
+the threshold is **strictly worse** than keeping the qlib stability
+fork. A truly paper-faithful run would need (a) strip CSRankNorm, (b)
+rescale `inner_lr` by ~100-360× to keep the inner step meaningful, and
+(c) recalibrate `cost_alpha_bps` for the raw-return prediction scale.
+Run11 is the "do (a) only" data point — answers the audit question
+("what if we just removed CSRankNorm?") with experimental evidence.
+
+### Run 12 — disable best-state restore after early stop
+
+| Diff vs run 9 | Why |
+|---|---|
+| **Comment out `model.load_state_dict(best_state)`** at [src/trainer/maml.py:237](../src/trainer/maml.py#L237). After pretrain, the model carries the **post-early-stop weights** (epoch 9, val IC ≈ 0.012) instead of being rolled back to the **best-IC weights** (epoch 1, val IC = 0.051). | Test how load-bearing the early-stop-rollback mechanism is. The pretrain trajectory through epoch 9 is bit-identical to run9 (same seed, same data). Only the Stage 1 → Stage 2 handoff differs. |
+| CSRankNorm restored from run11; all other hyperparameters and flow identical to run9 | Single-variable ablation |
+
+**Effect:**
+
+| Metric | Run 9 (restore) | Run 12 (no restore) | Δ |
+|---|---:|---:|---:|
+| Pretrain best val IC | 0.0507 (used) | 0.0507 (logged, discarded) | same trajectory |
+| Pretrain epoch-9 val IC | 0.0117 (discarded) | 0.0117 (carried into Stage 2) | same trajectory |
+| IL overall IC | **0.046** | 0.010 | **−78%** |
+| IL overall RankIC | **0.067** | 0.021 | −69% |
+| qlib cum return | **+56.7%** | +42.0% | −14.7 pp |
+| qlib Sharpe | **+1.24** | +0.82 | −0.42 |
+| qlib MDD | **−14.07%** | **−31.66%** | **−17.6 pp (more than 2×)** |
+| Win rate | **59.4%** | 54.9% | −4.5 pp |
+| Profit factor | **2.10** | 1.70 | −0.40 |
+| Trades | 1128 | 1124 | ~same |
+
+**The warmup loss tells the recovery story.** Run12's Stage-2 warmup
+loss starts at 1.43 (vs run9's 1.00) and decays toward 1.12 over 25
+rolling steps — i.e., Stage 2 is *still* recovering from the degraded
+init when it ends. Run9 starts at the plateau (1.00) and spends its
+25 steps on actual regime adaptation. By Stage 3's start, run9 has 25
+steps of productive adapt; run12 has burned its adapt budget on
+recovery and Stage 3 inherits a partially-recovered model.
+
+**Lesson**: `load_state_dict(best_state)` at the end of pretrain is
+load-bearing for ~15 pp of cum return and ~halves max drawdown.
+Stage 2 + 3's 53 combined FOMAML updates cannot fully recover from a
+degraded Stage-1 init. The early-stop counter is meaningful *only*
+because of the restore — without it, early stopping degrades to "stop
+at a worse epoch sooner", which is strictly worse than letting
+pretrain run to completion would have been (more pretrain epochs at
+least give the chance to randomly hit a better val IC).
+
+After the run12 ablation, the `load_state_dict(best_state)` line was
+restored. Per-run reproduction of run12 requires re-applying the
+comment-out.
+
+### Run 13 — patience ablation (8 → 16)
+
+| Diff vs run 9 | Why |
+|---|---|
+| `PretrainConfig.early_stop_patience` in [src/scripts/train.py:243](../src/scripts/train.py#L243): **8 → 16** | Test whether the early-stop budget is the limiting factor on pretrain quality |
+| Best-state restore at end of pretrain re-enabled (run12's `# load_state_dict(best_state)` was uncommented) | Otherwise identical to run9 |
+| Same seed, same data | First 9 epochs are bit-identical to run9; epochs 10-17 are new territory |
+
+**Effect: zero, but burns 6 min of GPU.**
+
+| Metric | Run 9 (patience=8) | Run 13 (patience=16) | Δ |
+|---|---:|---:|---:|
+| Pretrain epochs run | 10 | **18** | +8 |
+| Pretrain best val IC | 0.0507 @ ep1 | **0.0507 @ ep1** | same — peak never beaten in epochs 9-17 |
+| Wall-clock | 8.67 min | **14.62 min** | **+5.95 min** |
+| Best-state restored from | epoch 1 | epoch 1 | same checkpoint |
+| IL overall IC | 0.0459 | **0.0459** | bit-identical |
+| IL overall RankIC | 0.0672 | **0.0672** | bit-identical |
+| qlib cum return | +56.73% | **+56.73%** | bit-identical |
+| qlib Sharpe | 1.242 | **1.242** | bit-identical |
+| qlib MDD | −14.07% | **−14.07%** | bit-identical |
+| Final equity | 156,725,275.95 | **156,725,275.95** | identical to the cent |
+
+The val-IC trajectory through epochs 9-17 (new territory not seen by
+run9): 0.012, 0.018, 0.021, 0.020, 0.023, 0.021, 0.022, 0.022, 0.021 —
+slow drift upward but never reaches half of epoch 1's 0.0507. Best-state
+restore reverts to epoch 1 regardless, so the deployed checkpoint is
+identical to run9's, and every downstream computation is therefore
+also identical.
+
+**Lesson**: `early_stop_patience` is only load-bearing if pretrain
+finds a NEW val-IC peak during the extra epochs. For this seed/data
+combination, val IC peaks at epoch 1 and never returns. Any patience
+≥ 2 produces identical downstream behavior — patience=8 was already
+oversized. **A tighter patience=4 would save 2-3 min of GPU time per
+run without any operational risk.** Restored to patience=8 after the
+ablation.
+
+### Run 14 — task span ablation (r=20 → r=5)
+
+| Diff vs run 9 | Why |
+|---|---|
+| `FOMAMLConfig.r` in [src/scripts/train.py:242](../src/scripts/train.py#L242): **20 → 5** | Test whether more frequent meta-updates (4× more rolling steps, 5-day deployment window) helps the model track regime changes better |
+| Warmup IL now does 97 rolling steps (vs 25); live-IL does 115 (vs 28) | Direct consequence of r=5 — each task spans only 10 days instead of 40 |
+| Each task has ~250 support + ~250 query rows (vs ~1000 each at r=20) | 50 stocks × 5 days = 250 rows per window |
+| All other hyperparameters identical to run9 | Single-variable ablation |
+
+**Effect (paradoxical):**
+
+| Metric | Run 9 (r=20) | Run 14 (r=5) | Δ |
+|---|---:|---:|---:|
+| **Wall-clock** | 8.67 min | **4.14 min** | **−52% (faster, despite 4× more steps)** |
+| Pretrain epochs run | 10 | 10 | same — early stop fires at epoch 9 in both |
+| **Pretrain best val IC** | 0.0507 @ ep1 | **0.0561 @ ep1** | **+11%** — smaller tasks → more diverse meta-batches per epoch |
+| IL overall IC | 0.046 | 0.045 | ~same (averaged over 4× more, individually noisier windows) |
+| IL overall RankIC | 0.067 | 0.065 | ~same |
+| Per-step IC variance | ±0.13 typical | **±0.28 typical** | 2× wider (250-row IC inherently noisier than 1000-row) |
+| **qlib cum return** | **+56.7%** | +27.4% | −29.3 pp |
+| **qlib Sharpe** | **+1.24** | +0.65 | −0.59 (halves) |
+| **qlib MDD** | **−14.07%** | **−27.71%** | **doubles** |
+| n_trades | 1128 | 1157 | +29 (~same — n_drop=1 still throttles daily turnover) |
+| Win rate | 59.4% | 59.1% | ~same |
+| Profit factor | 2.10 | 1.69 | −0.40 |
+
+**Three counter-intuitive findings:**
+
+1. **Smaller tasks train FASTER.** Despite 4× more IL steps, run14
+   finished in half the wall-time. Smaller per-task tensors (250 vs
+   1000 rows) make each FOMAML inner+outer pass cheap enough to more
+   than offset the 4× step count. Pretrain also benefits — same
+   `tasks_per_epoch=1000` but each task processes 4× less data per step.
+2. **Smaller tasks find BETTER pretrain val IC.** 0.056 vs 0.051. The
+   meta-learner sees more diverse start dates per epoch — 1000 random
+   samples drawn from a much larger pool of valid r=5 windows than
+   r=20 windows improves regression-head generalization.
+3. **But the trading strategy is substantially worse.** Per-step IC
+   has ~2× higher variance (±0.28 vs ±0.13) — predictions are 4×
+   more reactive to short-term noise. Compounding: the portfolio's
+   frozen-prediction deployment window is now 5 days instead of 20,
+   so predictions go stale 4× faster. Net: more aggressive position
+   shifts on noisier signals → wider drawdowns (April 2025 saw a
+   trough to NT$86M visible in the equity curve).
+
+**Lesson**: task span trades off **meta-learner adaptation frequency**
+against **per-task signal quality**. r=20 sits closer to the qlib
+canonical setup and produces the best risk-adjusted trading even with
+slightly lower pretrain val IC. Shortening to r=5 is tempting (faster,
+higher pretrain IC) but the noisier per-task predictions translate
+directly into worse Sharpe and MDD. This matches the DoubleAdapt
+paper's choice — the value comes from the *match* between deployment
+cadence and prediction confidence horizon, not from adapting as
+frequently as possible. Restored r=20 after the ablation.
+
+## Counter-intuitive findings (across the 14 runs)
 
 1. **Pretrain val IC isn't the right metric for IL performance.** Runs 3-6
    have val IC ~0.020-0.029 vs run 2's 0.078 — yet better operational
@@ -303,6 +506,47 @@ cycle for monthly retraining.
    1d (run9 → run10). The DoubleAdapt + TopkDropout pipeline doesn't
    benefit from a wider universe regardless of label horizon, in this
    TWSE setup.
+10. **The qlib CSRankNorm fork carries the bi-level structure.** Stripping
+    CSRankNorm to be paper-faithful (run11) preserves pretrain val IC
+    almost exactly (Adam adapts) but the FOMAML *inner step* collapses
+    to a no-op because plain SGD on a 360× smaller loss produces ~zero
+    update — the whole point of per-task adaptation goes away. Result:
+    Sharpe halves, MDD nearly triples vs run9. A paper-faithful run
+    requires LR rescaling (~100-360×) AND threshold recalibration; doing
+    just the CSRankNorm strip on its own is strictly worse.
+11. **Early-stop is meaningful only WITH the best-state restore.** Run12
+    skipped the `load_state_dict(best_state)` rollback after pretrain
+    early-stop. Pretrain trajectory was bit-identical to run9 (same seed),
+    but Stage 2 inherited the epoch-9 weights (val IC 0.012) instead of
+    epoch-1 (val IC 0.051). Result: 25 warmup steps were burned on
+    recovery from the degraded init (warmup loss starts at 1.43 vs run9's
+    1.00 and is still recovering at step 25), and Stage 3 inherited a
+    partially-recovered model. MDD doubles (14% → 32%), Sharpe drops 1.24
+    → 0.82, cum return loses 15pp. The early-stop counter alone is not
+    the mechanism — the restore is.
+12. **Patience is irrelevant when val IC peaks at epoch 1.** Run13 doubled
+    early_stop_patience from 8 to 16 (everything else identical to run9).
+    Pretrain ran 8 extra epochs (10-17) and val IC drifted in the
+    0.012-0.023 range — never came near epoch 1's 0.0507. Best-state
+    restore reverted to epoch 1 anyway, so the deployed model and every
+    downstream metric were **bit-identical to run9 to the cent**. Net
+    effect: 6 extra minutes of GPU for zero benefit. Tighter patience
+    (≤ 4) would actually save time without operational risk for this
+    seed/data combination.
+13. **Higher pretrain val IC ≠ better trading.** Run14 (r=5) achieved
+    **the best pretrain val IC of any run** (0.0561 vs run9's 0.0507)
+    and trained in half the wall-time, yet had Sharpe halve and MDD
+    double on the same backtest window. Smaller task windows give
+    better-validated pretrain checkpoints but produce noisier per-step
+    predictions during live-IL — and the strategy is more sensitive to
+    per-step noise than to long-window IC averages. Pretrain val IC is
+    not a reliable proxy for trading performance once task span varies.
+14. **Smaller tasks train faster, not slower.** Counter to the "more
+    steps = more time" intuition, run14 (97 warmup + 115 live-IL steps)
+    finished in 4.14 min vs run9 (25 + 28 steps) in 8.67 min. Per-task
+    FOMAML cost is dominated by the (N × 60 × 6) tensor size — 250-row
+    tasks are 4× cheaper per step than 1000-row tasks, more than
+    offsetting the 4× step count.
 
 ## What's preserved on disk
 
@@ -318,7 +562,11 @@ cycle for monthly retraining.
 | [src/output/run8/](../src/output/run8/) | run 8 (TM100 universe, live-IL backtest, 20-day label) |
 | [src/output/run9/](../src/output/run9/) | **run 9 — recommended production** (TW50, live-IL, paper-faithful 1-day label) |
 | [src/output/run10/](../src/output/run10/) | run 10 (BOTH universe — completes the universe ablation matrix under the 1-day label) |
-| [src/output/CURRENT](../src/output/) | text file: `run10` (latest-trained — bump to `run9` for production deploy) |
+| [src/output/run11/](../src/output/run11/) | run 11 (paper-faithful no-CSRankNorm ablation — kept for evidence, not for deploy) |
+| [src/output/run12/](../src/output/run12/) | run 12 (no-best-state-restore ablation — kept for evidence, not for deploy) |
+| [src/output/run13/](../src/output/run13/) | run 13 (patience=16 ablation — bit-identical to run9 downstream; kept for completeness) |
+| [src/output/run14/](../src/output/run14/) | run 14 (r=5 task-span ablation — faster + better pretrain IC but worse trading; kept for evidence) |
+| [src/output/CURRENT](../src/output/) | text file: `run14` (latest-trained, ablation — bump to `run9` for production deploy) |
 
 Each `runN/` contains: `final.pt`, `pretrained.pt`, `norm_stats.pkl`,
 `predictions.csv` (date, stock_code_id, pred, actual), `bt_config.json`,
@@ -337,11 +585,14 @@ also have `final_prep.pt` (post-warmup checkpoint) and `warmup_log.csv`.
 | Highest Sharpe AND deploy-honest, 20d label | **run 7** (TW50, live-IL, Sharpe 1.38, MDD 18.1%) |
 | Widest universe (BOTH = TW50 ∪ TM100) | run 10 — same drawdown as run9 but lower Sharpe + 9× slower training |
 | Widest universe of mid-caps (experimental) | run 8 |
+| Paper-faithful no-CSRankNorm (research-only) | run 11 — strictly worse than run9 in this LR regime; kept for the ablation evidence |
 | Backwards compat with prior `deploy_today.py` runs | run 5 (last yfinance/Wikipedia model) |
 
-`output/CURRENT` is `run10` (latest-trained) — [deploy_today.py](../src/scripts/deploy_today.py)
-picks it up by default. Bump to `run9` for production deploys (same
-drawdown, higher Sharpe, faster retraining cycle).
+`output/CURRENT` is `run11` (latest-trained, ablation) — [deploy_today.py](../src/scripts/deploy_today.py)
+picks it up by default. **Bump to `run9` for production deploys** —
+same drawdown as run10 but with higher Sharpe and faster retraining,
+and substantially better than run11 on every metric except deviation
+faithfulness.
 
 ## Related
 

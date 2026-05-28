@@ -40,7 +40,7 @@ from src.data.universe import (  # noqa: E402
 # bookkeeping fields written to report.json.
 DEFAULT_UNIVERSE = "TW50"
 from src.data.handler import (  # noqa: E402
-    build_panel, PanelTensors, LABEL_HORIZON, SEQ_LEN, N_FIELDS,
+    build_panel, PanelTensors, PRED_HORIZON, SEQ_LEN, N_FIELDS,
 )
 from src.data.processor import (  # noqa: E402
     fit_robust_zscore, apply_robust_zscore, fillna,
@@ -119,19 +119,22 @@ OUT_DIR = OUT_BASE
 HISTORY_START = "2016-01-01"
 HISTORY_END = "2026-05-23"
 
-# Pretrain on 2016-2021. The 2022-2023 window serves TWO roles in sequence:
-#   1. During pretrain: per-epoch held-out validation (read-only, for early stop)
-#   2. After pretrain: IL warm-up training (model receives bi-level updates)
-# Backtest reporting starts in 2024 (data never touched by pretrain training,
-# only by IL adaptation).
-PRETRAIN_START = "2016-01-01"
-PRETRAIN_END = "2021-12-31"      # 6 years
-VAL_START = "2022-01-01"
-VAL_END = "2023-12-31"           # 2 years -- clean held-out val DURING pretrain
-
-IL_START = "2022-01-01"          # IL begins right after pretrain, including val period
-IL_END = "auto"
-BACKTEST_START = "2024-01-01"    # backtest reports only on 2024+ (post-warmup)
+# Three operational phases, each consuming one of Algorithm 1's meta-sets:
+#   - PRETRAIN phase (2016-2021)         → consumes the meta_train_set
+#   - VALIDATION phase (2022-2023)       → consumes the meta_valid_set
+#       Dual-purpose per the paper: (a) during pretrain, held-out for
+#       early-stop / best-state restore (read-only via train=False);
+#       (b) after pretrain, re-fed through DoubleAdapt for the "final
+#       preparation" warmup IL with real bi-level updates.
+#   - ONLINE_TRAINING phase (2024-now)   → consumes the meta_test_set
+#       The qlib backtest fine-tunes the model every r=20 days while
+#       simulating the portfolio (Algorithm 1 line 9 second half).
+PRETRAIN_START         = "2016-01-01"
+PRETRAIN_END           = "2021-12-31"   # 6 years
+VALIDATION_START       = "2022-01-01"
+VALIDATION_END         = "2023-12-31"   # 2 years -- held-out val + warmup IL
+ONLINE_TRAINING_START  = "2024-01-01"   # live-IL backtest starts here
+ONLINE_TRAINING_END    = "auto"         # extend to panel max
 
 
 def load_bars(universe: str) -> dict[str, pd.DataFrame]:
@@ -144,7 +147,7 @@ def load_bars(universe: str) -> dict[str, pd.DataFrame]:
         except Exception as e:
             print(f"[skip] {code}: {e!r}")
             continue
-        if df.empty or len(df) < SEQ_LEN + LABEL_HORIZON + 1:
+        if df.empty or len(df) < SEQ_LEN + PRED_HORIZON + 1:
             print(f"[skip-thin] {code}: only {len(df)} rows")
             continue
         bars[code] = df
@@ -197,7 +200,7 @@ def main() -> None:
     if len(bars) < 5:
         print("WARNING: very few stocks loaded. Cache likely incomplete.")
 
-    panel = build_panel(bars, label_h=LABEL_HORIZON)
+    panel = build_panel(bars, pred_h=PRED_HORIZON)
     print(f"raw panel rows: {len(panel):,}; "
           f"dates: {pd.Timestamp(panel.dates.min()).date()} -> "
           f"{pd.Timestamp(panel.dates.max()).date()}")
@@ -211,23 +214,30 @@ def main() -> None:
     panel = apply_time_varying_universe(panel, schedule)
     print(f"after universe mask: {len(panel):,} rows")
 
-    pretrain_X = panel.slice_by_date(PRETRAIN_START, PRETRAIN_END).X
-    norm_stats = fit_robust_zscore(pretrain_X)
+    meta_train_X = panel.slice_by_date(PRETRAIN_START, PRETRAIN_END).X
+    norm_stats = fit_robust_zscore(meta_train_X)
     panel = PanelTensors(
         X=fillna(apply_robust_zscore(panel.X, norm_stats)),
         y=panel.y, dates=panel.dates, codes=panel.codes,
     )
-    print(f"feature norm fit on {len(pretrain_X):,} pretrain rows")
+    print(f"feature norm fit on {len(meta_train_X):,} meta-train rows")
     # Persist for deploy_today.py
     with open(OUT_DIR / "norm_stats.pkl", "wb") as f:
         pickle.dump(norm_stats, f)
 
-    pre_train = panel.slice_by_date(PRETRAIN_START, PRETRAIN_END).drop_nan_labels()
-    pre_val = panel.slice_by_date(VAL_START, VAL_END).drop_nan_labels()
+    # Algorithm-1 meta-sets:
+    #   meta_train_set ← PRETRAIN window         (offline pretrain)
+    #   meta_valid_set ← VALIDATION window       (held-out val + warmup IL)
+    #   meta_test_set  ← ONLINE_TRAINING window  (live-IL backtest)
+    meta_train_set = panel.slice_by_date(PRETRAIN_START, PRETRAIN_END).drop_nan_labels()
+    meta_valid_set = panel.slice_by_date(VALIDATION_START, VALIDATION_END).drop_nan_labels()
+    # The IL panel needs to extend back ~90 days before VALIDATION_START so the
+    # first warmup task's train window (VALIDATION_START − r days) has features.
     il_panel = panel.slice_by_date(
-        pd.Timestamp(IL_START) - pd.Timedelta(days=90), HISTORY_END
+        pd.Timestamp(VALIDATION_START) - pd.Timedelta(days=90), HISTORY_END
     )
-    print(f"pretrain: {len(pre_train):,}  |  val: {len(pre_val):,}  |  IL: {len(il_panel):,}")
+    print(f"meta_train_set: {len(meta_train_set):,}  |  "
+          f"meta_valid_set: {len(meta_valid_set):,}  |  IL panel: {len(il_panel):,}")
 
     model = DoubleAdapt(seq_len=SEQ_LEN, n_fields=N_FIELDS).to(device)
     print(f"#DA params: {sum(p.numel() for p in model.da_parameters()):,}")
@@ -241,22 +251,26 @@ def main() -> None:
     #     plateau (paper-style patience instead of run-2's aggressive cut)
     fcfg = FOMAMLConfig(lr_psi=1e-3)
     pcfg = PretrainConfig(epochs=30, tasks_per_epoch=1000, early_stop_patience=8)
-    il_end_actual = (str(pd.Timestamp(panel.dates.max()).date())
-                     if IL_END == "auto" else IL_END)
-    print(f"IL plan: warmup {IL_START} → {BACKTEST_START}, then live-IL backtest "
-          f"{BACKTEST_START} → {il_end_actual}")
+    online_end_actual = (str(pd.Timestamp(panel.dates.max()).date())
+                         if ONLINE_TRAINING_END == "auto" else ONLINE_TRAINING_END)
+    print(f"IL plan: warmup (meta-valid set) {VALIDATION_START} → {ONLINE_TRAINING_START}, "
+          f"then online training / live-IL (meta-test set) "
+          f"{ONLINE_TRAINING_START} → {online_end_actual}")
 
-    print("\n=== offline FOMAML pretrain ===")
-    pre_res = pretrain_offline(model, pre_train, pre_val, fcfg, pcfg, device)
+    # ---- Stage 1: offline pretrain on meta_train_set, validate on meta_valid_set ----
+    print("\n=== offline FOMAML pretrain (meta_train_set) ===")
+    pre_res = pretrain_offline(model, meta_train_set, meta_valid_set, fcfg, pcfg, device)
     torch.save(model.state_dict(), OUT_DIR / "pretrained.pt")
     pd.DataFrame(pre_res["history"]).to_csv(OUT_DIR / "pretrain_log.csv", index=False)
-    print(f"saved pretrained.pt; best val IC = {pre_res['best_val_ic']:.4f}")
+    print(f"saved pretrained.pt; best meta-valid IC = {pre_res['best_val_ic']:.4f}")
 
-    # ---- Stage 2': IL warmup (2022-01 → BACKTEST_START) ----
-    # Walks the pretrained checkpoint forward through the val window doing
-    # per-20-day FOMAML adapts, producing the "after final preparation" model.
-    print(f"\n=== IL warmup ({IL_START} → {BACKTEST_START}) — final preparation ===")
-    warmup_cfg = ILConfig(start_date=IL_START, end_date=BACKTEST_START)
+    # ---- Stage 2: IL warmup ("final preparation") on meta_valid_set ----
+    # Re-feeds the meta_valid_set through DoubleAdapt with REAL bi-level updates
+    # (Algorithm 1 line 9 first half). Walks the pretrained checkpoint forward
+    # through the validation window producing the "after final preparation" model.
+    print(f"\n=== IL warmup ({VALIDATION_START} → {ONLINE_TRAINING_START}) — "
+          f"final preparation on meta_valid_set ===")
+    warmup_cfg = ILConfig(start_date=VALIDATION_START, end_date=ONLINE_TRAINING_START)
     warmup_log, warmup_preds = run_incremental(model, il_panel, fcfg, warmup_cfg, device)
     torch.save(model.state_dict(), OUT_DIR / "final_prep.pt")
     warmup_log.to_csv(OUT_DIR / "warmup_log.csv", index=False)
@@ -271,14 +285,16 @@ def main() -> None:
         json.dumps({"asof": str(schedule.iloc[-1]["asof"]) if len(schedule) else None,
                     "codes": final_universe}, indent=2))
 
-    # ---- Stage 3: live-IL backtest (BACKTEST_START → now) ----
-    # Starts from final_prep.pt; walks forward in r=20-day windows; at each
-    # step does fomaml_step (adapts model in-place) AND simulates portfolio
-    # trades over the query window. Final model state -> final.pt.
-    print(f"\n=== live-IL qlib backtest ({BACKTEST_START} → {il_end_actual}) ===")
+    # ---- Stage 3: online training / live-IL backtest on meta_test_set ----
+    # Algorithm 1 line 9 second half: starts from final_prep.pt, walks forward
+    # in r=20-day windows. At each step does fomaml_step (adapts model in-place
+    # AND simulates portfolio trades over the test window). Final model state
+    # -> final.pt.
+    print(f"\n=== online training / live-IL qlib backtest "
+          f"({ONLINE_TRAINING_START} → {online_end_actual}) — meta_test_set ===")
     bt, step_log, preds = run_qlib_backtest_with_il(
         model, il_panel, bars, fcfg, bt_cfg,
-        start_date=BACKTEST_START, end_date=il_end_actual, device=device,
+        start_date=ONLINE_TRAINING_START, end_date=online_end_actual, device=device,
     )
     torch.save(model.state_dict(), OUT_DIR / "final.pt")
     step_log.to_csv(OUT_DIR / "il_log.csv", index=False)
@@ -309,18 +325,25 @@ def main() -> None:
     report = {
         "history_start": HISTORY_START,
         "history_end": HISTORY_END,
-        "pretrain_window": [PRETRAIN_START, PRETRAIN_END],
-        "val_window": [VAL_START, VAL_END],
-        "il_window": [IL_START, il_end_actual],
-        "il_warmup": [IL_START, BACKTEST_START],
-        "backtest_window": [BACKTEST_START, il_end_actual],
+        # Operational-phase date windows (the date-range constants in train.py)
+        "pretrain_window":        [PRETRAIN_START, PRETRAIN_END],
+        "validation_window":      [VALIDATION_START, VALIDATION_END],
+        "online_training_window": [ONLINE_TRAINING_START, online_end_actual],
+        # Mapping to Algorithm 1 of the DoubleAdapt paper (T_train, T_valid, T_test).
+        # Each operational phase consumes one meta-set drawn from the matching window.
+        "meta_train_set_window": [PRETRAIN_START, PRETRAIN_END],
+        "meta_valid_set_window": [VALIDATION_START, VALIDATION_END],
+        "meta_test_set_window":  [ONLINE_TRAINING_START, online_end_actual],
+        "il_window":              [VALIDATION_START, online_end_actual],  # full rolling-IL span
+        "il_warmup_window":       [VALIDATION_START, ONLINE_TRAINING_START],
         "universe": universe_name,
         "n_candidate_pool": len(bars),
         "n_active_per_period": typical_size,
         "rebalances_per_year": 2,
         "n_rebalances": int(len(schedule)),
         "n_panel_rows": int(len(panel)),
-        "n_pretrain_rows": int(len(pre_train)),
+        "n_meta_train_set_rows": int(len(meta_train_set)),
+        "n_meta_valid_set_rows": int(len(meta_valid_set)),
         "n_il_rows": int(len(il_panel)),
         "pretrain_best_val_ic": float(pre_res["best_val_ic"]),
         "pretrain_epochs_run": len(pre_res["history"]),
@@ -336,11 +359,11 @@ def main() -> None:
         "backtest_cfg": {"capital": bt_cfg.capital, "top_k": bt_cfg.top_k,
                          "cost_alpha_bps": bt_cfg.cost_alpha_bps},
         "model_config": {
-            "seq_len": SEQ_LEN, "n_fields": N_FIELDS, "label_horizon": LABEL_HORIZON,
+            "seq_len": SEQ_LEN, "n_fields": N_FIELDS, "pred_horizon": PRED_HORIZON,
             "fomaml": asdict(fcfg),
             "pretrain": asdict(pcfg),
             "il_warmup": asdict(warmup_cfg),
-            "il_online_start": BACKTEST_START,
+            "online_training_start": ONLINE_TRAINING_START,
         },
         "trained_at": pd.Timestamp.now().isoformat(),
         "universe_codes": list(bars.keys()),

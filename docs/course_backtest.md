@@ -33,33 +33,46 @@ causality as [deploy_today.py](../src/scripts/deploy_today.py).
 
 ## Cross-run comparison
 
-All 8 runs evaluated on the **operational window 2024-01-02 → 2026-04-23**
-(555 trading days), initial cash NT$100M (framework units = 100k):
+All 14 runs evaluated on the **operational window 2024-01-02 → 2026-04-30**
+(560 trading days), initial cash NT$100M (framework units = 100k):
 
-| Run | Universe | Cum return | Final equity | Notes |
-|---|---|---:|---:|---|
-| run1 | TW50-era | +59.3% | NT$ 159.3M | qlib defaults baseline |
-| run2 | TW50-era | +100.7% | NT$ 200.7M | + tuned pretrain |
-| run3 | TW50-era | +112.2% | NT$ 212.2M | + longer pretrain |
-| run4 | TW50-era | +124.4% | NT$ 224.4M | + 2022-2023 IL warmup |
-| **run5** | TW50-era | **+135.3%** | **NT$ 235.3M** | + clean held-out val |
-| run6 | TW50 | +76.0% | NT$ 176.0M | TEJ cache + monthly TW50 mask |
-| **run7** | TW50 | **+124.0%** | **NT$ 224.0M** | + live-IL backtest flow (predictions generated during the qlib backtest, not as a separate pre-pass) |
-| run8 | **TM100** | +55.4% | NT$ 155.4M | --universe TM100 (100-stock mid-cap mask, 24 codes auto-injected for the framework's 2330 day-reference) |
+| Run | Label h | Universe | Mode | Cum return | Final equity | Notes |
+|---|---|---|---|---:|---:|---|
+| run1 | 20d | TW50-era | replay | +58.7% | NT$ 158.7M | qlib defaults baseline |
+| run2 | 20d | TW50-era | replay | +95.1% | NT$ 195.1M | + tuned pretrain |
+| run3 | 20d | TW50-era | replay | +114.1% | NT$ 214.1M | + longer pretrain |
+| **run4** | 20d | TW50-era | replay | **+147.8%** | **NT$ 247.8M** | + 2022-2023 IL warmup (new course-backtest leader) |
+| run5 | 20d | TW50-era | replay | +99.8% | NT$ 199.8M | + clean held-out val |
+| run6 | 20d | TW50 | replay | +76.0% | NT$ 176.0M | TEJ cache + monthly TW50 mask |
+| **run7** | 20d | TW50 | **live-IL** | **+124.0%** | **NT$ 224.0M** | + live-IL backtest flow (predictions generated during the qlib backtest, not as a separate pre-pass) |
+| run8 | 20d | **TM100** | **live-IL** | +55.4% | NT$ 155.4M | --universe TM100 (100-stock mid-cap mask, 24 codes auto-injected for the framework's 2330 day-reference) |
+| run9 | **1d** | TW50 | **live-IL** | +49.5% | NT$ 149.5M | + paper-faithful 1-day c2c label (production recommendation) |
+| run10 | 1d | **BOTH** | live-IL | +37.1% | NT$ 137.1M | + universe TW50 ∪ TM100 (~150/period) |
+| run11 | 1d | TW50 | live-IL **no-CSRankNorm** | +11.4% | NT$ 111.4M | ablation: strip CSRankNorm wrap (inner FOMAML collapses) |
+| run12 | 1d | TW50 | live-IL **no best-state restore** | +35.7% | NT$ 135.7M | ablation: skip restore-to-best-IC after early stop |
+| run13 | 1d | TW50 | live-IL **patience=16** | +49.5% | NT$ 149.5M | ablation: bit-identical to run9 (best-state never beaten) |
+| run14 | 1d | TW50 | live-IL **r=5** | +40.1% | NT$ 140.1M | ablation: 5-day task span — more steps but noisier per-step preds |
 
-### Full-IL view (2022-01 → 2026-04, 1,040 days)
+> **Table refreshed 2026-05-28**. Re-ran the course backtest for every
+> run with `--start-date 20240101` (operational window) against the
+> framework's bar cache pre-populated from `src/_cache/`. Numbers above
+> are from the framework's `total return` field; final equity uses the
+> framework's implicit 1000× scaling (100k framework units = NT$100M
+> starting cash).
 
-Runs 4-6 have predictions for 2022-2023 (the IL warmup window); runs 1-3
-and run7 don't (run7's predictions.csv is scoped to 2024+ only by design).
+### Why run9 (live-IL, 1-day label) lags the 20-day-label runs here
 
-| Run | Cum return | Final equity |
-|---|---:|---:|
-| run4 | +138.7% | NT$ 238.7M |
-| **run5** | **+252.7%** | **NT$ 352.7M** |
-| run6 | (not yet measured on full window) | |
-| run7 | N/A — predictions.csv starts at 2024-01-01 | — |
+The course framework has **no transaction costs**, so the optimal play
+is to make bigger bets — exactly what the 20-day-label runs do. The
+1-day-label runs (run9-run14) take more conservative position sizes,
+which is the right trade in real markets (TWSE pays ~58 bps round-trip)
+but leaves return on the table in this zero-cost simulator.
 
-### Why run7's course-backtest number (+124%) is higher than its qlib-backtest number (+81%)
+For the **paper-faithful & deploy-honest** ranking, run9 still wins
+across both engines on risk-adjusted metrics (Sharpe + max DD — see
+[qlib_backtest.md](qlib_backtest.md) and [model_performance.md](model_performance.md)).
+
+### Why run7's course-backtest number (+124%) is higher than its qlib-backtest number (+79%)
 
 Same predictions, different engines. Run7's qlib backtest charges TWSE
 costs (~58 bps round-trip) and uses today's close as the deal price; the
@@ -68,7 +81,7 @@ zero-cost gives a tailwind that more than compensates the lag-cost over
 the 2024-2026 trending market.
 
 For run7, both engines agree on the **strategy character**: profitable
-with moderate trade frequency (~1100 trades / 555 days = ~2/day).
+with moderate trade frequency (~1100 trades / 560 days = ~2/day).
 
 ### Why run6 looks lower here than in [qlib_backtest.md](qlib_backtest.md)
 

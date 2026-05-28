@@ -73,7 +73,7 @@ with Stage 3 also running portfolio simulation.
                   Normalized panel (same shape, lag-0 → 0, clipped to ±3)
                               │
                               ▼  sample / walk tasks of length r=20
-                              ▼  per task: (x_sup, y_sup, x_qry, y_qry)
+                              ▼  per task: (x_train, y_train, x_test, y_test)
                           → FOMAML step (see "Per-task" below)
 ```
 
@@ -146,49 +146,59 @@ This is what runs *once per task* during Stage 1 (offline pretrain) and
 ```
                                         Inner / lower-level
                                       ──────────────────────
-   x_sup, y_sup ──┐                           y_sup
-   (past r days)  │                             │
-                  ▼                             ▼ CSRankNorm
-              G(x_sup) → x_sup_tilde     y_sup_norm
-                  │                             │
-                  ├─────────────────────────────┤
-                  ▼                             ▼
-              F(φ)(x_sup_tilde)            H(x_sup_tilde, y_sup_norm)
-              = pred_sup_raw               = y_sup_tilde
-                  │                             │
-                  └──────► MSE(·, ·) ◄──────────┘
-                              │
-                              ▼
-                          L_train
-                              │
-                              ▼  ∇_φ L_train  (autograd.grad, detached)
-                  θ^k = φ − η_θ · ∇_φ L_train      ← FOMAML inner step
-                              │
-                              │  (θ used functionally — model.base.φ untouched)
-                              │
+   x_train, y_train ──┐                       y_train
+   (past r days)      │                          │
+                      ▼                          ▼ CSRankNorm
+                G(x_train) → x_train_tilde     y_train_norm
+                      │                          │
+                      ├──────────────────────────┤
+                      ▼                          ▼
+              F(φ)(x_train_tilde)          H(x_train_tilde, y_train_norm)
+              = pred_train_raw             = y_train_tilde
+                      │                          │
+                      └──────► MSE(·, ·) ◄───────┘
+                                  │
+                                  ▼
+                              L_train
+                                  │
+                                  ▼  ∇_φ L_train  (autograd.grad, detached)
+                  θ^k = φ − η_θ · ∇_φ L_train          ← FOMAML inner step
+                                  │
+                                  │  (θ used functionally — model.base.φ untouched)
+                                  │
                                        Outer / upper-level
                                       ──────────────────────
-   x_qry, y_qry ──┐                           y_qry
-   (next r days)  │                             │
-                  ▼                             ▼ CSRankNorm
-              G(x_qry) → x_qry_tilde     y_qry_norm
-                  │                             │
-                  ▼                             │
-            functional_call(F, θ, x_qry_tilde)  │
-              = pred_qry_raw                    │
-                  │                             │
-                  ▼ H⁻¹                         │
-              ŷ = pred_qry                      │
-                  │                             │
-                  └──────► MSE(ŷ, y_qry_norm) ──┴── + α · MSE(H(y), y_qry_norm)
-                              │                                                    │
-                              ▼                                                    │
-                          L_test  =  L_MSE  +  α · L_reg ◄───────────────────────┘
-                              │
-                              ▼  L_test.backward()
+   x_test, y_test ──┐                         y_test
+   (next r days)    │                           │
+                    ▼                           ▼ CSRankNorm
+              G(x_test) → x_test_tilde     y_test_norm
+                    │                           │
+                    ▼                           │
+            functional_call(F, θ, x_test_tilde) │
+              = pred_test_raw                   │
+                    │                           │
+                    ▼ H⁻¹                       │
+              ŷ = pred_test                     │
+                    │                           │
+                    └──────► MSE(ŷ, y_test_norm) ─┴── + α · MSE(H(y), y_test_norm)
+                                │                                                  │
+                                ▼                                                  │
+                            L_test  =  L_MSE  +  α · L_reg ◄────────────────────┘
+                                │
+                                ▼  L_test.backward()
                   optim_phi.step()  →  φ ← Adam(lr_phi=1e-3)   (updates F's GRU)
-                  optim_psi.step()  →  ψ ← Adam(lr_psi=1e-2)   (updates G + H)
+                  optim_psi.step()  →  ψ ← Adam(lr_psi=1e-3)   (updates G + H)
 ```
+
+> **Terminology note.** Throughout this codebase, "train" / "test" refer
+> to the per-task meta-train / meta-test split (the support / query sets
+> in standard MAML literature) — NOT the project-level pretrain vs
+> backtest windows. They share names because they play the same logical
+> role inside each task: train is what the inner step adapts on, test
+> is what the outer loss is evaluated against. The `train: bool` flag on
+> `fomaml_step` is a separate concept — it controls whether the outer
+> step actually backpropagates (`True` for training/IL passes, `False`
+> for read-only val passes).
 
 Three separate learning rates, all configurable via `FOMAMLConfig`.
 Values shown are what `train.py` *actually passes* (which overrides the
@@ -217,22 +227,24 @@ handoff from pretrain to IL (see [model_env.md](model_env.md)).
    │          ││                 ││                 │
    └──────────┘└─────────────────┘└─────────────────┘
 
-   support window of task k+1   ≡   query window of task k
+   train window of task k+1   ≡   test window of task k
    ─────────────────────────────────────────────────────────
 
    At trade-day D in Stage 3:
      - model state reflects everything adapted through D − r
-     - next FOMAML step on support=[D−r, D−1] only fires once
+     - next FOMAML step on train=[D−r, D−1] only fires once
        those labels are observable (1-day publish lag, since
-       LABEL_HORIZON=1)
-     - within the r-day query window, the model is FROZEN and
+       PRED_HORIZON=1)
+     - within the r-day test window, the model is FROZEN and
        emits 20 sequential 1-day predictions
 ```
 
 Verified against [run9's il_log.csv](../src/output/run9/il_log.csv): for
-all 28 consecutive live-IL tasks, `support_start[k+1] == query_start[k]`
+all 28 consecutive live-IL tasks, `train_start[k+1] == test_start[k]`
 holds — chained rolling, no overlap, no gap. Same for the 25 warmup
 tasks in [run9's warmup_log.csv](../src/output/run9/warmup_log.csv).
+(Earlier runs use the legacy `support_*` / `query_*` column names —
+re-running training under the renamed code emits the new column names.)
 
 Stage 1 (pretrain) is the exception: tasks are sampled *randomly* from
 the 2016-2021 panel with replacement (`tasks_per_epoch=1000` per
@@ -255,7 +267,7 @@ model the task structure across many independent starts.
        ├─ for each val task:
        │     FOMAML step (train=False)  ← NO L_test.backward()
        │                                   so meta-learners untouched
-       │     collect pred_qry for IC computation
+       │     collect pred_test for IC computation
        │
        ├─ val_ic = cross_sectional_ic(preds, ys, dates)
        │
@@ -287,7 +299,7 @@ mutated by val tasks.
        │
        ├─ collect (date, code, pred, actual) for predictions.csv
        │
-       ├─ STAGE 3 ONLY: for each day in query window:
+       ├─ STAGE 3 ONLY: for each day in test window:
        │     pick top-K above threshold,
        │     simulate sells / buys (TopkDropout + n_drop=1),
        │     apply TWSE costs (0.1425% × 2 + 0.3% tax + NT$20 min),
@@ -303,18 +315,28 @@ mutated by val tasks.
 
 ## Key date windows (defaults from train.py)
 
-| Constant | Value | Used for |
-|---|---|---|
-| `HISTORY_START` | 2016-01-01 | First bar fetched from cache |
-| `PRETRAIN_END` | 2021-12-31 | Last bar in Stage 1 training set |
-| `VAL_START`/`VAL_END` | 2022-01-01 / 2023-12-31 | Held-out val during Stage 1 |
-| `IL_START` | 2022-01-01 | First task in Stage 2 (warmup IL) |
-| `BACKTEST_START` | 2024-01-01 | First trade day in Stage 3 |
-| `HISTORY_END` | 2026-05-23 (rolling) | Latest bar; advances with each TEJ import |
+Each operational phase consumes one of Algorithm 1's meta-sets:
+
+| Date constant | Value | Operational phase | Meta-set (Algorithm 1) |
+|---|---|---|---|
+| `HISTORY_START` | 2016-01-01 | (universal cache floor) | — |
+| `PRETRAIN_START` / `PRETRAIN_END` | 2016-01-01 / 2021-12-31 | Stage 1 — pretrain (offline) | `meta_train_set` (T_train) |
+| `VALIDATION_START` / `VALIDATION_END` | 2022-01-01 / 2023-12-31 | (a) read-only val during Stage 1; (b) warmup IL "final preparation" in Stage 2 | `meta_valid_set` (T_valid) — dual-purpose per the paper |
+| `ONLINE_TRAINING_START` / `ONLINE_TRAINING_END` | 2024-01-01 / `auto` | Stage 3 — online training / live-IL backtest | `meta_test_set` (T_test) |
+| `HISTORY_END` | 2026-05-23 (rolling) | (clamps `ONLINE_TRAINING_END=auto` to the panel max) | — |
 
 The 2022-2023 block serves dual duty: held-out val during Stage 1
 (no updates) then warmup IL during Stage 2 (real updates). This is
 exactly what Algorithm 1 prescribes for T_valid.
+
+In `train.py` the panel slices are named to mirror the paper's meta-set
+naming:
+```python
+meta_train_set = panel.slice_by_date(PRETRAIN_START, PRETRAIN_END)
+meta_valid_set = panel.slice_by_date(VALIDATION_START, VALIDATION_END)
+# meta_test_set is implicit — consumed by the live-IL backtest via
+# start_date=ONLINE_TRAINING_START, end_date=ONLINE_TRAINING_END.
+```
 
 ## Key model + training hyperparameters
 
@@ -322,7 +344,7 @@ exactly what Algorithm 1 prescribes for T_valid.
 |---|---|---:|---|
 | `SEQ_LEN` | handler.py | 60 | Days of lookback per row |
 | `N_FIELDS` | handler.py | 6 | Fields per timestep (close, open, high, low, vwap, volume) |
-| `LABEL_HORIZON` | handler.py | **1** | Forward c2c return horizon (paper-faithful) |
+| `PRED_HORIZON` | handler.py | **1** | Forward c2c return horizon (paper-faithful) |
 | `FOMAMLConfig.r` | maml.py default | 20 | Task interval (support len = query len = deployment window) |
 | `FOMAMLConfig.inner_lr` | maml.py default | 1e-3 | η_θ — inner step |
 | `FOMAMLConfig.lr_phi` | maml.py default | 1e-3 | η_φ — outer step on F (GRU base) |
@@ -376,7 +398,7 @@ reference table:
 | 2 | `φ', ψ' ← copy(φ, ψ)` then val on copies | `train=False` skips outer backward (no copy) | Zero — both ensure val doesn't update meta-learners |
 | 3 | Online predictions span T_valid ∪ T_test | `predictions.csv` only covers T_test (2024+) | Low — warmup-window predictions aren't persisted |
 | 4 | Paper outer step is plain SGD | Adam (`optim_phi` / `optim_psi`) | Standard substitution; same η_φ / η_ψ as labels |
-| 5 | H operates on raw y | CSRankNorm wraps y before H (qlib stability trick); reported IC still computed against raw y | Re-tuning all LRs would be needed to remove the wrap |
+| 5 | H operates on raw y | CSRankNorm wraps y before H (qlib stability trick); reported IC still computed against raw y | Re-tuning all LRs would be needed to remove the wrap. **Tested in run11**: stripping CSRankNorm without LR rescaling halves Sharpe (1.24 → 0.43) and nearly triples MDD (−14% → −40%) vs run9 — the inner FOMAML step collapses because plain SGD on a 360× smaller loss is a no-op. See [model_env.md Run 11](model_env.md) and [model_performance.md run9 vs run11](model_performance.md) for the controlled ablation. |
 
 ## Related docs
 

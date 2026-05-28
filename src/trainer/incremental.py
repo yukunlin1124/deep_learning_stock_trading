@@ -2,12 +2,12 @@
 
 Walks forward through the IL window in steps of r=20 trading days. At each
 step:
-  - support = past r trading days (with labels)
-  - query   = next r trading days
+  - train (= meta-train / support set) = past r trading days
+  - test  (= meta-test  / query   set) = next r trading days
   - Run one FOMAML bi-level step:
-       inner: theta = phi - eta * grad_phi L_train  (support)
+       inner: theta = phi - eta * grad_phi L_train  (on train set)
        outer: L_test backprop -> update DA (psi) and MA (phi)
-  - Record predictions + IC/RankIC over the query window.
+  - Record predictions + IC/RankIC over the test window.
 
 Per the paper: keep meta-learner LRs ON during deployment so adapters drift
 with the market.
@@ -48,15 +48,15 @@ def run_incremental(
     udates = np.unique(panel.dates)
     start = np.datetime64(pd.Timestamp(icfg.start_date))
     end = np.datetime64(pd.Timestamp(icfg.end_date))
-    qry_first_idx = int(np.searchsorted(udates, start, side="left"))
-    qry_first_idx = max(qry_first_idx, fcfg.r)
+    test_first_idx = int(np.searchsorted(udates, start, side="left"))
+    test_first_idx = max(test_first_idx, fcfg.r)
 
     rows = []
     preds_rows = []
     step = 0
-    i = qry_first_idx
+    i = test_first_idx
     while i + fcfg.r <= len(udates):
-        sup_start = udates[i - fcfg.r]
+        train_start = udates[i - fcfg.r]
         task = panel_to_task(panel, i - fcfg.r, fcfg.r, device)
         if task is None:
             i += fcfg.r; step += 1
@@ -66,23 +66,23 @@ def run_incremental(
 
         optim_phi.zero_grad(set_to_none=True)
         optim_psi.zero_grad(set_to_none=True)
-        test_loss, pred_qry, y_qry = fomaml_step(model, task, fcfg, train=True)
+        test_loss, pred_test, y_test = fomaml_step(model, task, fcfg, train=True)
         optim_phi.step(); optim_psi.step()
 
-        preds_np = pred_qry.cpu().numpy()
-        ys_np = y_qry.cpu().numpy()
-        d_np = task.qry_dates
-        c_np = task.qry_codes
+        preds_np = pred_test.cpu().numpy()
+        ys_np = y_test.cpu().numpy()
+        d_np = task.test_dates
+        c_np = task.test_codes
         ic, icir, ric, ricir = cross_sectional_ic(preds_np, ys_np, d_np)
 
         rows.append({
             "step": step,
-            "support_start": pd.Timestamp(sup_start).date(),
-            "support_end": pd.Timestamp(udates[i - 1]).date(),
-            "query_start": pd.Timestamp(udates[i]).date(),
-            "query_end": pd.Timestamp(udates[min(i + fcfg.r - 1, len(udates) - 1)]).date(),
-            "n_support": int(task.x_sup.shape[0]),
-            "n_query": int(task.x_qry.shape[0]),
+            "train_start": pd.Timestamp(train_start).date(),
+            "train_end": pd.Timestamp(udates[i - 1]).date(),
+            "test_start": pd.Timestamp(udates[i]).date(),
+            "test_end": pd.Timestamp(udates[min(i + fcfg.r - 1, len(udates) - 1)]).date(),
+            "n_train": int(task.x_train.shape[0]),
+            "n_test": int(task.x_test.shape[0]),
             "test_loss": float(test_loss),
             "ic": float(ic), "icir": float(icir),
             "ric": float(ric), "ricir": float(ricir),
@@ -94,9 +94,9 @@ def run_incremental(
                 "pred": float(p), "actual": float(a),
             })
 
-        log_fn(f"[IL] step {step:3d}: q={pd.Timestamp(udates[i]).date()}.."
+        log_fn(f"[IL] step {step:3d}: t={pd.Timestamp(udates[i]).date()}.."
                f"{pd.Timestamp(udates[min(i+fcfg.r-1, len(udates)-1)]).date()} "
-               f"n_sup={task.x_sup.shape[0]:5d} n_qry={task.x_qry.shape[0]:5d} "
+               f"n_train={task.x_train.shape[0]:5d} n_test={task.x_test.shape[0]:5d} "
                f"loss={test_loss:.5f} ic={ic:+.4f} ric={ric:+.4f}")
 
         i += fcfg.r

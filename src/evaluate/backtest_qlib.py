@@ -298,9 +298,9 @@ def run_qlib_backtest_with_il(
     log_fn=print,
 ) -> tuple[BTResult, pd.DataFrame, pd.DataFrame]:
     """Walk il_panel forward in r-day windows. Each window:
-      1. Build (support, query) task; do one FOMAML bi-level update on support;
-         get predictions for the query days.
-      2. For each day in the query window: take top-K from those predictions,
+      1. Build (train, test) task; do one FOMAML bi-level update on the train set;
+         get predictions for the test days.
+      2. For each day in the test window: take top-K from those predictions,
          simulate sells/buys/mark-to-close (same rules as
          `run_qlib_backtest_from_predictions`).
 
@@ -350,11 +350,11 @@ def run_qlib_backtest_with_il(
     start = np.datetime64(pd.Timestamp(start_date))
     end = (np.datetime64(pd.Timestamp(end_date))
            if end_date else udates[-1])
-    qry_first_idx = max(int(np.searchsorted(udates, start, side="left")), fcfg.r)
+    test_first_idx = max(int(np.searchsorted(udates, start, side="left")), fcfg.r)
 
     step_log_rows = []
     pred_rows = []
-    i = qry_first_idx
+    i = test_first_idx
     step = 0
     while i + fcfg.r <= len(udates):
         if udates[i] > end:
@@ -366,30 +366,30 @@ def run_qlib_backtest_with_il(
         # ---- (1) IL step: adapt + predict ----
         optim_phi.zero_grad(set_to_none=True)
         optim_psi.zero_grad(set_to_none=True)
-        test_loss, pred_qry, y_qry = fomaml_step(model, task, fcfg, train=True)
+        test_loss, pred_test, y_test = fomaml_step(model, task, fcfg, train=True)
         optim_phi.step(); optim_psi.step()
 
-        preds_np = pred_qry.cpu().detach().numpy()
-        ys_np = y_qry.cpu().detach().numpy()
-        d_np = task.qry_dates
-        c_np = task.qry_codes
+        preds_np = pred_test.cpu().detach().numpy()
+        ys_np = y_test.cpu().detach().numpy()
+        d_np = task.test_dates
+        c_np = task.test_codes
         ic, icir, ric, ricir = cross_sectional_ic(preds_np, ys_np, d_np)
 
         step_log_rows.append({
             "step": step,
-            "support_start": pd.Timestamp(udates[i - fcfg.r]).date(),
-            "support_end": pd.Timestamp(udates[i - 1]).date(),
-            "query_start": pd.Timestamp(udates[i]).date(),
-            "query_end": pd.Timestamp(udates[min(i + fcfg.r - 1, len(udates) - 1)]).date(),
-            "n_support": int(task.x_sup.shape[0]),
-            "n_query": int(task.x_qry.shape[0]),
+            "train_start": pd.Timestamp(udates[i - fcfg.r]).date(),
+            "train_end": pd.Timestamp(udates[i - 1]).date(),
+            "test_start": pd.Timestamp(udates[i]).date(),
+            "test_end": pd.Timestamp(udates[min(i + fcfg.r - 1, len(udates) - 1)]).date(),
+            "n_train": int(task.x_train.shape[0]),
+            "n_test": int(task.x_test.shape[0]),
             "test_loss": float(test_loss),
             "ic": float(ic), "icir": float(icir),
             "ric": float(ric), "ricir": float(ricir),
         })
 
-        # ---- (2) Build per-(date, code) pred lookup for the query window ----
-        # task.qry_dates is parallel with preds_np
+        # ---- (2) Build per-(date, code) pred lookup for the test window ----
+        # task.test_dates is parallel with preds_np
         day_preds: dict[pd.Timestamp, dict[str, float]] = {}
         for d, c, p, a in zip(d_np, c_np, preds_np, ys_np):
             d_ts = pd.Timestamp(d)
@@ -400,7 +400,7 @@ def run_qlib_backtest_with_il(
                 "pred": float(p), "actual": float(a),
             })
 
-        # ---- (3) Simulate portfolio for each day in the query window ----
+        # ---- (3) Simulate portfolio for each day in the test window ----
         for day_idx in range(fcfg.r):
             di = i + day_idx
             if di >= len(udates):

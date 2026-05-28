@@ -2,14 +2,14 @@
 
 Per the paper:
   - Inner: theta_k = phi_{k-1} - eta_theta * grad_phi L_train   (single step)
-  - Outer: L_test = MSE(H^-1(F_theta(G(x_query))), y_query)
-                  + alpha * MSE(H(y_query), y_query)            (regularization)
+  - Outer: L_test = MSE(H^-1(F_theta(G(x_test))), y_test)
+                  + alpha * MSE(H(y_test), y_test)              (regularization)
   - First-order MAML: treat theta_k as phi - constant when backproping L_test.
   - Optimizers: Adam, lr_inner=1e-3, lr_phi (MA)=1e-3, lr_psi (DA)=1e-2, alpha=0.5.
 
 Tasks are sliced by trading-date index from a flat PanelTensors blob:
-  support = rows whose date is in dates[i:i+r],
-  query   = rows whose date is in dates[i+r:i+2r],
+  train (= meta-train / support set) = rows whose date is in dates[i:i+r],
+  test  (= meta-test  / query   set) = rows whose date is in dates[i+r:i+2r],
 where r = 20 (task interval). Pretrain samples i uniformly (or sweeps all
 when n_tasks is None).
 """
@@ -32,38 +32,42 @@ from src.evaluate.metrics import cross_sectional_ic
 
 @dataclass
 class Task:
-    x_sup: torch.Tensor
-    y_sup: torch.Tensor
-    x_qry: torch.Tensor
-    y_qry: torch.Tensor
-    sup_dates: np.ndarray
-    qry_dates: np.ndarray
-    qry_codes: np.ndarray
+    """A meta-learning task = (train, test) split adjacent in time.
+    `train` is the inner-step's "support" set (past r days).
+    `test`  is the outer-step's "query"  set (next r days).
+    """
+    x_train: torch.Tensor
+    y_train: torch.Tensor
+    x_test: torch.Tensor
+    y_test: torch.Tensor
+    train_dates: np.ndarray
+    test_dates: np.ndarray
+    test_codes: np.ndarray
 
 
 def _unique_sorted_dates(panel: PanelTensors) -> np.ndarray:
     return np.unique(panel.dates)
 
 
-def panel_to_task(panel: PanelTensors, sup_start_idx: int, r: int,
+def panel_to_task(panel: PanelTensors, train_start_idx: int, r: int,
                   device: torch.device) -> Task | None:
     udates = _unique_sorted_dates(panel)
-    if sup_start_idx + 2 * r > len(udates):
+    if train_start_idx + 2 * r > len(udates):
         return None
-    sup_dates = udates[sup_start_idx : sup_start_idx + r]
-    qry_dates = udates[sup_start_idx + r : sup_start_idx + 2 * r]
-    sup_mask = np.isin(panel.dates, sup_dates) & np.isfinite(panel.y)
-    qry_mask = np.isin(panel.dates, qry_dates) & np.isfinite(panel.y)
-    if sup_mask.sum() < 8 or qry_mask.sum() < 8:
+    train_dates = udates[train_start_idx : train_start_idx + r]
+    test_dates = udates[train_start_idx + r : train_start_idx + 2 * r]
+    train_mask = np.isin(panel.dates, train_dates) & np.isfinite(panel.y)
+    test_mask = np.isin(panel.dates, test_dates) & np.isfinite(panel.y)
+    if train_mask.sum() < 8 or test_mask.sum() < 8:
         return None
     return Task(
-        x_sup=torch.from_numpy(panel.X[sup_mask]).to(device),
-        y_sup=torch.from_numpy(panel.y[sup_mask]).to(device),
-        x_qry=torch.from_numpy(panel.X[qry_mask]).to(device),
-        y_qry=torch.from_numpy(panel.y[qry_mask]).to(device),
-        sup_dates=panel.dates[sup_mask],
-        qry_dates=panel.dates[qry_mask],
-        qry_codes=panel.codes[qry_mask],
+        x_train=torch.from_numpy(panel.X[train_mask]).to(device),
+        y_train=torch.from_numpy(panel.y[train_mask]).to(device),
+        x_test=torch.from_numpy(panel.X[test_mask]).to(device),
+        y_test=torch.from_numpy(panel.y[test_mask]).to(device),
+        train_dates=panel.dates[train_mask],
+        test_dates=panel.dates[test_mask],
+        test_codes=panel.codes[test_mask],
     )
 
 
@@ -112,14 +116,14 @@ def fomaml_step(
     whether the OUTER loss is backproped.
     """
     model.train()
-    y_sup_norm = csrank_normalize_per_date(task.y_sup, task.sup_dates)
-    y_qry_norm = csrank_normalize_per_date(task.y_qry, task.qry_dates)
+    y_train_norm = csrank_normalize_per_date(task.y_train, task.train_dates)
+    y_test_norm = csrank_normalize_per_date(task.y_test, task.test_dates)
 
-    # Inner forward on support. H sees the ADAPTED x_tilde (qlib semantics).
-    x_sup_tilde = model.feature_adapter(task.x_sup)
-    y_sup_tilde = model.label_adapter(x_sup_tilde, y_sup_norm, inverse=False)
-    pred_sup_raw = model.base(x_sup_tilde)
-    L_train = F.mse_loss(pred_sup_raw, y_sup_tilde)
+    # Inner forward on the train set. H sees the ADAPTED x_tilde (qlib semantics).
+    x_train_tilde = model.feature_adapter(task.x_train)
+    y_train_tilde = model.label_adapter(x_train_tilde, y_train_norm, inverse=False)
+    pred_train_raw = model.base(x_train_tilde)
+    L_train = F.mse_loss(pred_train_raw, y_train_tilde)
 
     # Inner step on base params (FOMAML: detach grads).
     phi_named = dict(model.base.named_parameters())
@@ -131,19 +135,19 @@ def fomaml_step(
         for k, p, g in zip(phi_names, phi_params, grads)
     }
 
-    # Outer forward on query using theta.
-    x_qry_tilde = model.feature_adapter(task.x_qry)
-    pred_qry_raw = functional_call(model.base, theta_named, (x_qry_tilde,))
-    pred_qry = model.label_adapter(x_qry_tilde, pred_qry_raw, inverse=True)
-    y_qry_tilde = model.label_adapter(x_qry_tilde, y_qry_norm, inverse=False)
+    # Outer forward on the test set using theta.
+    x_test_tilde = model.feature_adapter(task.x_test)
+    pred_test_raw = functional_call(model.base, theta_named, (x_test_tilde,))
+    pred_test = model.label_adapter(x_test_tilde, pred_test_raw, inverse=True)
+    y_test_tilde = model.label_adapter(x_test_tilde, y_test_norm, inverse=False)
 
-    L_test = (F.mse_loss(pred_qry, y_qry_norm)
-              + cfg.alpha_reg * F.mse_loss(y_qry_tilde, y_qry_norm))
+    L_test = (F.mse_loss(pred_test, y_test_norm)
+              + cfg.alpha_reg * F.mse_loss(y_test_tilde, y_test_norm))
 
     if train:
         L_test.backward()
 
-    return float(L_test.detach().item()), pred_qry.detach(), task.y_qry.detach()
+    return float(L_test.detach().item()), pred_test.detach(), task.y_test.detach()
 
 
 # ----------------- pretrain loop -----------------
@@ -202,11 +206,11 @@ def pretrain_offline(
         all_p, all_y, all_d = [], [], []
         for task in val_tasks:
             model.zero_grad(set_to_none=True)
-            _, pred_qry, y_qry = fomaml_step(model, task, fcfg, train=False)
+            _, pred_test, y_test = fomaml_step(model, task, fcfg, train=False)
             model.zero_grad(set_to_none=True)
-            all_p.append(pred_qry.cpu().numpy())
-            all_y.append(y_qry.cpu().numpy())
-            all_d.append(task.qry_dates)
+            all_p.append(pred_test.cpu().numpy())
+            all_y.append(y_test.cpu().numpy())
+            all_d.append(task.test_dates)
         if all_p:
             preds = np.concatenate(all_p)
             ys = np.concatenate(all_y)

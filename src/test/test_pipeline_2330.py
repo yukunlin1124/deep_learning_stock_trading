@@ -46,7 +46,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.io import fetch_range, CACHE_DIR
 from src.data.handler import (
-    build_panel, PanelTensors, SEQ_LEN, N_FIELDS, LABEL_HORIZON,
+    build_panel, PanelTensors, SEQ_LEN, N_FIELDS, PRED_HORIZON,
 )
 from src.data.processor import (
     fit_robust_zscore, apply_robust_zscore, fillna,
@@ -70,12 +70,12 @@ OUT_DIR.mkdir(exist_ok=True)
 # Fixed date splits — match src/scripts/train.py exactly.
 HISTORY_START = "2016-01-01"
 HISTORY_END = "2026-05-23"
-PRETRAIN_START = "2016-01-01"
-PRETRAIN_END = "2021-12-31"
-VAL_START = "2022-01-01"
-VAL_END = "2023-12-31"
-IL_START = "2024-01-01"
-IL_END = "auto"                      # extend to panel max
+PRETRAIN_START         = "2016-01-01"
+PRETRAIN_END           = "2021-12-31"
+VALIDATION_START       = "2022-01-01"
+VALIDATION_END         = "2023-12-31"
+ONLINE_TRAINING_START  = "2024-01-01"
+ONLINE_TRAINING_END    = "auto"                      # extend to panel max
 REQUIRED_YEARS = list(range(2016, 2027))   # 2016..2026 inclusive
 
 
@@ -129,14 +129,14 @@ def main() -> None:
     required_cols = {"date", "open", "high", "low", "close", "capacity", "turnover"}
     assert_(required_cols.issubset(df.columns),
             f"all required OHLCV columns present ({required_cols})")
-    assert_(len(df) >= SEQ_LEN + LABEL_HORIZON + 1,
-            f"enough bars for Alpha360 ({len(df)} >= {SEQ_LEN + LABEL_HORIZON + 1})")
+    assert_(len(df) >= SEQ_LEN + PRED_HORIZON + 1,
+            f"enough bars for Alpha360 ({len(df)} >= {SEQ_LEN + PRED_HORIZON + 1})")
 
     bars = {TEST_STOCK: df}
 
     # ---- 2. Panel ----
     print("\n=== 2. Build panel ===")
-    panel = build_panel(bars, label_h=LABEL_HORIZON)
+    panel = build_panel(bars, pred_h=PRED_HORIZON)
     assert_(len(panel) > 0, f"panel built ({len(panel)} rows)")
     assert_(panel.X.shape[1:] == (SEQ_LEN, N_FIELDS),
             f"X shape per row is (60, 6)")
@@ -149,14 +149,14 @@ def main() -> None:
     # ---- 3. Fixed date splits (match src/scripts/train.py) ----
     pretrain_start = pd.Timestamp(PRETRAIN_START)
     pretrain_end = pd.Timestamp(PRETRAIN_END)
-    val_start = pd.Timestamp(VAL_START)
-    val_end = pd.Timestamp(VAL_END)
-    il_start = pd.Timestamp(IL_START)
-    il_end = (pd.Timestamp(panel.dates.max())
-              if IL_END == "auto" else pd.Timestamp(IL_END))
-    print(f"pretrain: {pretrain_start.date()} -> {pretrain_end.date()}")
-    print(f"val     : {val_start.date()} -> {val_end.date()}")
-    print(f"IL      : {il_start.date()} -> {il_end.date()}")
+    val_start = pd.Timestamp(VALIDATION_START)
+    val_end = pd.Timestamp(VALIDATION_END)
+    online_start = pd.Timestamp(ONLINE_TRAINING_START)
+    online_end = (pd.Timestamp(panel.dates.max())
+                  if ONLINE_TRAINING_END == "auto" else pd.Timestamp(ONLINE_TRAINING_END))
+    print(f"pretrain        : {pretrain_start.date()} -> {pretrain_end.date()}")
+    print(f"validation      : {val_start.date()} -> {val_end.date()}")
+    print(f"online training : {online_start.date()} -> {online_end.date()}")
 
     # ---- 4. Feature norm (RobustZScoreNorm fit on pretrain) ----
     print("\n=== 3. Feature norm ===")
@@ -170,13 +170,14 @@ def main() -> None:
     assert_(np.abs(panel.X).max() <= 3.0 + 1e-5,
             f"clipped to +-3 ({np.abs(panel.X).max():.3f})")
 
-    pre_train = panel.slice_by_date(pretrain_start, pretrain_end).drop_nan_labels()
-    pre_val = panel.slice_by_date(val_start, val_end).drop_nan_labels()
+    # Algorithm-1 meta-sets carved out of each operational date window.
+    meta_train_set = panel.slice_by_date(pretrain_start, pretrain_end).drop_nan_labels()
+    meta_valid_set = panel.slice_by_date(val_start, val_end).drop_nan_labels()
     il_panel = panel.slice_by_date(
-        val_start - pd.Timedelta(days=90), il_end
+        val_start - pd.Timedelta(days=90), online_end
     )
-    assert_(len(pre_train) > 0, f"pretrain panel non-empty ({len(pre_train)})")
-    assert_(len(pre_val) > 0, f"val panel non-empty ({len(pre_val)})")
+    assert_(len(meta_train_set) > 0, f"meta_train_set non-empty ({len(meta_train_set)})")
+    assert_(len(meta_valid_set) > 0, f"meta_valid_set non-empty ({len(meta_valid_set)})")
     assert_(len(il_panel) > 0, f"IL panel non-empty ({len(il_panel)})")
 
     # ---- 5. Model construction ----
@@ -193,15 +194,15 @@ def main() -> None:
         epochs=3, tasks_per_epoch=20, val_n_tasks=20,
         early_stop_patience=99, seed=0,
     )
-    pre_res = pretrain_offline(model, pre_train, pre_val, fcfg, pcfg, device)
+    pre_res = pretrain_offline(model, meta_train_set, meta_valid_set, fcfg, pcfg, device)
     assert_("history" in pre_res and len(pre_res["history"]) >= 1,
             f"pretrain produced history ({len(pre_res['history'])} epochs)")
 
     # ---- 7. IL ----
     print("\n=== 6. Incremental learning ===")
     icfg = ILConfig(
-        start_date=str(il_start.date()),
-        end_date=str(il_end.date()),
+        start_date=str(online_start.date()),
+        end_date=str(online_end.date()),
     )
     step_log, preds = run_incremental(model, il_panel, fcfg, icfg, device)
     # Note: may produce 0 steps if the IL window is too short for r=10
@@ -240,11 +241,11 @@ def main() -> None:
         "test": "pipeline_2330",
         "stock": TEST_STOCK,
         "pretrain_window": [PRETRAIN_START, PRETRAIN_END],
-        "val_window": [VAL_START, VAL_END],
-        "il_window": [IL_START, str(il_end.date())],
+        "validation_window": [VALIDATION_START, VALIDATION_END],
+        "online_training_window": [ONLINE_TRAINING_START, str(online_end.date())],
         "n_panel_rows": int(len(panel)),
-        "n_pretrain_rows": int(len(pre_train)),
-        "n_val_rows": int(len(pre_val)),
+        "n_meta_train_set_rows": int(len(meta_train_set)),
+        "n_meta_valid_set_rows": int(len(meta_valid_set)),
         "n_il_rows": int(len(il_panel)),
         "pretrain_epochs": int(len(pre_res["history"])),
         "il_steps": int(len(step_log)),

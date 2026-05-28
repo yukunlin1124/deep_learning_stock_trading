@@ -7,12 +7,12 @@ Each field at lag d in [59, 58, ..., 1, 0] is normalized by the lag-0 value:
     feature = field[t-d] / field[t]
 The result reshapes naturally to (60, 6) for a sequence model.
 
-Label: next-day close-to-close return.
-    label[t] = close[t + 1] / close[t] - 1.0
+Label: next-day close-to-close return (prediction horizon = 1 day).
+    label[t] = close[t + PRED_HORIZON] / close[t] - 1.0
 This matches the DoubleAdapt paper's spec — the model predicts a single
 1-day forward return; the 20-day cadence elsewhere in the pipeline
 (FOMAMLConfig.r) is the *task interval* (= deployment window between
-meta-updates), NOT the label horizon.
+meta-updates), NOT the prediction horizon.
 
 build_panel(bars) returns a PanelTensors with:
     X     : (N, 60, 6) float32
@@ -30,12 +30,12 @@ import pandas as pd
 SEQ_LEN = 60
 N_FIELDS = 6
 FEATURE_DIM = SEQ_LEN * N_FIELDS  # 360
-LABEL_HORIZON = 1
+PRED_HORIZON = 1
 
 FIELDS = ["close", "open", "high", "low", "vwap", "volume"]
 
 
-def compute_alpha360(df: pd.DataFrame, label_h: int = LABEL_HORIZON) -> pd.DataFrame:
+def compute_alpha360(df: pd.DataFrame, pred_h: int = PRED_HORIZON) -> pd.DataFrame:
     """Build per-stock Alpha360 frame.
     df columns required: date, open, high, low, close, capacity, turnover.
     Returns DataFrame with columns: date, stock_code_id, X, y_fwd.
@@ -53,11 +53,11 @@ def compute_alpha360(df: pd.DataFrame, label_h: int = LABEL_HORIZON) -> pd.DataF
 
     fields_arr = np.stack([c, o, h, lo, vwap, cap], axis=1)  # (T, 6)
     T = fields_arr.shape[0]
-    if T < SEQ_LEN + label_h:
+    if T < SEQ_LEN + pred_h:
         return pd.DataFrame(columns=["date", "stock_code_id", "X", "y_fwd"])
 
     label = np.full(T, np.nan, dtype=float)
-    label[: T - label_h] = c[label_h:] / c[: T - label_h] - 1.0
+    label[: T - pred_h] = c[pred_h:] / c[: T - pred_h] - 1.0
 
     out_rows = []
     code = str(df["stock_code_id"].iloc[0])
@@ -108,12 +108,12 @@ class PanelTensors:
 
 
 def build_panel(bars: dict[str, pd.DataFrame],
-                label_h: int = LABEL_HORIZON) -> PanelTensors:
+                pred_h: int = PRED_HORIZON) -> PanelTensors:
     pieces = []
     for code, df in bars.items():
-        if df.empty or len(df) < SEQ_LEN + label_h:
+        if df.empty or len(df) < SEQ_LEN + pred_h:
             continue
-        feat = compute_alpha360(df, label_h=label_h)
+        feat = compute_alpha360(df, pred_h=pred_h)
         if not feat.empty:
             pieces.append(feat)
     if not pieces:

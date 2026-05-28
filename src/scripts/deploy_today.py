@@ -60,7 +60,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.io import fetch_range
 from src.data.handler import (
-    compute_alpha360, SEQ_LEN, N_FIELDS, LABEL_HORIZON,
+    compute_alpha360, SEQ_LEN, N_FIELDS, PRED_HORIZON,
 )
 from src.data.processor import apply_robust_zscore, fillna
 from src.model.double_adapt import DoubleAdapt
@@ -147,7 +147,7 @@ def predict_for_yesterday(
         if len(df) < SEQ_LEN + 1:
             print(f"[skip] {code}: only {len(df)} bars (need >= {SEQ_LEN + 1})")
             continue
-        feat = compute_alpha360(df, label_h=1).tail(1)  # label horizon irrelevant here
+        feat = compute_alpha360(df, pred_h=1).tail(1)  # pred horizon irrelevant here
         if feat.empty:
             continue
         rows.append({
