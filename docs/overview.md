@@ -345,6 +345,7 @@ meta_valid_set = panel.slice_by_date(VALIDATION_START, VALIDATION_END)
 | `SEQ_LEN` | handler.py | 60 | Days of lookback per row |
 | `N_FIELDS` | handler.py | 6 | Fields per timestep (close, open, high, low, vwap, volume) |
 | `PRED_HORIZON` | handler.py | **1** | Forward c2c return horizon (paper-faithful) |
+| `FEATURE_MODE` | handler.py | **"qlib"** | Alpha360 normalization scheme — `"qlib"` (5 price fields / close[t], vol / vol[t]) for run17+; `"per_field"` (each field / its own lag-0) for runs 1-16. `train.py` writes the active mode to `runN/feature_scheme.json` so `deploy_today.py` can match it. |
 | `FOMAMLConfig.r` | maml.py default | 20 | Task interval (support len = query len = deployment window) |
 | `FOMAMLConfig.inner_lr` | maml.py default | 1e-3 | η_θ — inner step |
 | `FOMAMLConfig.lr_phi` | maml.py default | 1e-3 | η_φ — outer step on F (GRU base) |

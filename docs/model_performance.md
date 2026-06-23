@@ -76,6 +76,9 @@ drawdown (−14% vs run3's −33%) and risk-adjusted metrics (IC, RankIC).
 | run12 | 1d | TW50 | live-IL **no best-state restore** | +0.0098 | +0.0517 | +0.0208 | +0.1207 | −32.3% | −1.95 | −31.7% | −0.87 |
 | run13 | 1d | TW50 | live-IL **patience=16** (vs default 8) | +0.0459 | +0.2058 | +0.0672 | +0.3260 | −28.8% | −1.69 | −14.07% | −0.69 |
 | run14 | 1d | TW50 | live-IL **r=5** (5-day task span) | +0.0450 | +0.1989 | +0.0652 | +0.3115 | −40.0% | −2.47 | −27.7% | −0.94 |
+| run15 | 1d | TW50 | live-IL **lr_psi=1e-2** (paper-default 10× ratio) | +0.0404 | +0.1813 | +0.0631 | +0.3150 | −41.0% | −2.37 | −23.0% | −0.95 |
+| run16 | 1d | **BOTH** | live-IL **lr_psi=1e-2** (universe + LR both off) | +0.0208 | +0.1406 | +0.0566 | +0.3992 | −36.6% | −2.04 | −25.8% | −0.86 |
+| **run17** | 1d | TW50 | live-IL **qlib-exact Alpha360** (paper-faithful normalization) | **+0.0506** | **+0.246** | **+0.0742** | **+0.380** | −29.9% | −1.72 | −16.5% | −0.73 |
 
 > **Table refreshed 2026-05-28**. Re-derived from the freshly-replayed
 > qlib equity.csv for every run (181-code unified bars covering TW50 +
@@ -401,6 +404,138 @@ windows — the value comes from the *match* between deployment cadence
 and prediction confidence horizon, not from adapting as frequently
 as possible.
 
+### run9 vs run15 — DA learning-rate ablation (lr_psi 1e-3 → 1e-2)
+
+Only difference: `FOMAMLConfig.lr_psi` raised from `1e-3` back to the
+paper-default `1e-2` (= 10× lr_phi). This is the same ratio run2's
+notes deliberately overrode because it "destabilized the handoff from
+pretrain to IL". Run15 retests that finding with the modern pipeline
+(TEJ bars, 1-day labels, live-IL, Adam outer step).
+
+| Metric | run9 (lr_psi=1e-3) | run15 (lr_psi=1e-2) | Δ |
+|---|---:|---:|---:|
+| Pretrain best val IC | 0.0507 | **0.0520** | +0.0013 (~tied — DA reaches similar shape regardless of LR) |
+| IL overall IC | **0.0459** | 0.0404 | −12% |
+| IL overall ICIR | **0.206** | 0.181 | −12% |
+| IL overall RankIC | **0.0672** | 0.0631 | −6% |
+| IL overall RankICIR | 0.326 | 0.315 | −3% |
+| **Cum return** | **+56.7%** | +18.9% | **−37.8 pp** |
+| **Sharpe** | **+1.24** | +0.51 | **−0.73 (halves)** |
+| **Max DD** | **−14.07%** | **−23.02%** | **−9 pp** |
+| Win rate | **59.4%** | 55.1% | −4.3 pp |
+| Profit factor | **2.10** | 1.62 | −0.48 |
+| Trades | 1128 | 1128 | identical |
+| Wall-time | 8.67 min | 8.70 min | same |
+
+**Run2's original finding still holds in the 2026 pipeline.** Even
+with Adam's per-parameter variance normalization absorbing some of the
+extra gradient magnitude, the 10× lr_psi causes:
+
+1. **Faster overfit during pretrain** — train loss falls 2× faster
+   (epoch 4: 0.78 vs run9's 0.89; epoch 6: 0.58 vs 0.73) while val
+   IC peaks at the same epoch 1 and declines harder. The best-state
+   restore still recovers the epoch-1 checkpoint, so pretrain output
+   matches run9 in val IC.
+2. **DA drift between IL tasks** — at every r=20 day rolling step,
+   ψ takes a 10× larger Adam update on a noisy 1000-row L_test
+   gradient. The result is per-task predictions that are less
+   consistent over time (IC dispersion higher), so the top-K
+   selection rotates more on noise than on actual signal.
+3. **Same trade count, worse P&L** — n_trades is bit-identical (1128
+   in both) because n_drop=1 throttles turnover; what differs is
+   *which* stocks get rotated. The 10× LR's noisier DA picks
+   slightly worse names → win rate drops 4 pp → cumulative
+   compounds to −38 pp over the 560-day window.
+
+**Lesson confirmed**: the run2 override is load-bearing for the live
+IL pipeline. The paper-default 10× lr_psi/lr_phi ratio is fine for
+pretrain alone (val IC ~tied) but actively harmful to the rolling
+fine-tune phase. **Restored `lr_psi=1e-3`** after the ablation.
+
+### run9 / run10 / run15 / run16 — the universe × lr_psi 2×2 interaction
+
+Run16 stacks two ablations vs run9 (BOTH universe + lr_psi=1e-2). The
+2×2 matrix reveals a real interaction effect:
+
+|  | **TW50 (~50/period)** | **BOTH (~150/period)** | Universe effect (BOTH − TW50) |
+|---|---:|---:|---:|
+| **lr_psi=1e-3** (run9 / run10) | **+56.7% / Sh +1.24 / MDD −14.07%** | +46.4% / Sh +0.99 / MDD −14.01% | **−10.3 pp** (TW50 wins) |
+| **lr_psi=1e-2** (run15 / run16) | +18.9% / Sh +0.51 / MDD −23.0% | **+30.8% / Sh +0.72 / MDD −25.8%** | **+11.9 pp** (BOTH wins!) |
+| LR effect (1e-2 − 1e-3) | **−37.8 pp** (LR hurts a lot) | **−15.6 pp** (LR hurts less) | |
+
+**Two ways to read this**:
+
+1. **Universe choice flips with LR.** With the calmer DA (lr_psi=1e-3),
+   TW50's focused universe wins because the model can be selectively
+   confident in a smaller candidate pool. With the noisier DA
+   (lr_psi=1e-2), BOTH's wider universe wins because the extra
+   cross-sectional averaging recovers signal from the per-task noise.
+
+2. **Universe hardness depends on DA stability.** A noisy DA hurts
+   more on a small universe (TW50: −38 pp) than a large one (BOTH:
+   −16 pp). The wider candidate pool acts as a partial buffer against
+   ψ's per-task drift — more stocks = more chances for the top-K
+   selection to land on something genuinely well-ranked despite
+   noisier individual predictions.
+
+This is a real **interaction effect** — you can't pick the optimal
+value of each knob independently. The classic ablation method of
+"hold all else fixed, vary one" misses these crossovers.
+
+**Practical implication**: if you ever need to use a higher lr_psi
+(e.g., because you've changed the loss scale via raw-y), you should
+also widen the universe. And vice versa — TW50 only "wins" because
+lr_psi was already low enough.
+
+**Run16 still loses to run9 on every metric** (cum +31% vs +57%,
+Sharpe 0.72 vs 1.24, MDD −26% vs −14%), so the bigger story is
+unchanged: TW50 + lr_psi=1e-3 + everything-else-default is the
+operational sweet spot. Run16 is the diagonal of the ablation
+matrix and the most informative ablation evidence we have.
+
+### run9 vs run17 — qlib-exact Alpha360 normalization
+
+Only difference: `compute_alpha360` switched from per-field
+normalization (each field / its own lag-0 → lag-0 row = [1,1,1,1,1,1])
+to qlib-exact (5 price fields / `close[t]`, volume / `volume[t]` →
+lag-0 row encodes today's intraday bar shape). Same training config,
+same backtest config as run9.
+
+| Metric | run9 (per-field) | run17 (qlib-exact) | Δ |
+|---|---:|---:|---:|
+| **Pretrain best val IC** | 0.0507 | **0.0610** | **+20%** |
+| IL overall IC | 0.0459 | **0.0506** | **+10%** |
+| IL overall ICIR | 0.206 | **0.246** | **+19%** |
+| IL overall RankIC | 0.0672 | **0.0742** | **+10%** |
+| IL overall RankICIR | 0.326 | **0.380** | **+17%** |
+| Cum return | **+56.7%** | +53.4% | −3.4 pp |
+| Sharpe | +1.24 | +1.23 | ~tied |
+| Max DD | **−14.07%** | −16.50% | −2.4 pp |
+| Win rate | 59.4% | **62.3%** | +2.9 pp |
+| Profit factor | 2.10 | **2.17** | +0.07 |
+| n_trades | 1128 | 1128 | identical |
+| Wall-time | 8.67 min | 8.49 min | ~same |
+
+**Signal quality wins cleanly across every IC metric.** The 5 extra
+intraday-shape features encoded at lag-0 (open/close, high/close,
+low/close, vwap/close ratios) are genuinely useful — RankICIR up 17%,
+ICIR up 19%, these are the qlib literature's primary "model quality"
+metrics.
+
+**Trading P&L is essentially tied** (Sharpe 1.23 vs 1.24) with slight
+trade-offs: win rate up 2.9 pp, profit factor up 0.07, but MDD widens
+2.4 pp and cum return drops 3.4 pp. The TopkDropoutStrategy with
+top_k=10 captures most of the available edge regardless of which
+Alpha360 normalization was used.
+
+**Verdict: qlib-exact Alpha360 is the better forecasting model**
+(higher IC across the board, matches the paper exactly, deployable
+to qlib's published baselines) — kept as the default for new runs.
+Runs 1-16 stay deployable via the `feature_scheme.json` flag that
+`train.py` now writes; `deploy_today.py` auto-detects each run's
+training scheme and uses the matching normalization at inference time
+to prevent silent feature distortion.
+
 ## How to regenerate this table
 
 ```powershell
@@ -429,7 +564,7 @@ the benchmark by trade date, and applies the qlib formulas above.)
    replayed through the new qlib engine. This is fine for fair
    cross-run comparison but it's **not** what the runs originally
    computed during training.
-2. **All 14 runs are evaluated on the same 2024-01 → 2026-04 operational
+2. **All 17 runs are evaluated on the same 2024-01 → 2026-04 operational
    window** even though runs 4-6 also trained the IL on 2022-2023. The
    2022-2023 inner-loop window is not reflected in this table — see
    [model_env.md](model_env.md) for the full IL view.

@@ -28,10 +28,9 @@ import torch
 
 # Allow running as `python src/scripts/train.py`.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data.io import fetch_range  # noqa: E402
-from src.data.universe import (  # noqa: E402
+from src.data.io import fetch_range
+from src.data.universe import (
     get_index_universe_codes, build_universe_schedule,
 )
 
@@ -39,23 +38,23 @@ from src.data.universe import (  # noqa: E402
 # CLI (parsed in main()) — this default is used by both __main__ and the
 # bookkeeping fields written to report.json.
 DEFAULT_UNIVERSE = "TW50"
-from src.data.handler import (  # noqa: E402
-    build_panel, PanelTensors, PRED_HORIZON, SEQ_LEN, N_FIELDS,
+from src.data.handler import (
+    build_panel, PanelTensors, PRED_HORIZON, SEQ_LEN, N_FIELDS, FEATURE_MODE, FIELDS,
 )
-from src.data.processor import (  # noqa: E402
+from src.data.processor import (
     fit_robust_zscore, apply_robust_zscore, fillna,
 )
-from src.model.double_adapt import DoubleAdapt  # noqa: E402
-from src.trainer.maml import (  # noqa: E402
+from src.model.double_adapt import DoubleAdapt
+from src.trainer.maml import (
     FOMAMLConfig, PretrainConfig, pretrain_offline,
 )
-from src.trainer.incremental import ILConfig, run_incremental  # noqa: E402
-from src.evaluate.metrics import cross_sectional_ic  # noqa: E402
-from src.evaluate.backtest_qlib import (  # noqa: E402
+from src.trainer.incremental import ILConfig, run_incremental
+from src.evaluate.metrics import cross_sectional_ic
+from src.evaluate.backtest_qlib import (
     QlibBTConfig as BTConfig,
     run_qlib_backtest_with_il,
 )
-from src.workflow.forecast import forecast_latest  # noqa: E402
+from src.workflow.forecast import forecast_latest
 
 OUT_BASE = PROJECT_ROOT / "src" / "output"
 OUT_BASE.mkdir(exist_ok=True)
@@ -224,6 +223,15 @@ def main() -> None:
     # Persist for deploy_today.py
     with open(OUT_DIR / "norm_stats.pkl", "wb") as f:
         pickle.dump(norm_stats, f)
+    # Record which Alpha360 normalization was used so deploy_today.py can
+    # reproduce matching features at inference time. Runs without this file
+    # are assumed legacy "per_field" (= runs 1-16).
+    (OUT_DIR / "feature_scheme.json").write_text(json.dumps({
+        "mode": FEATURE_MODE,
+        "seq_len": SEQ_LEN,
+        "n_fields": N_FIELDS,
+        "fields": list(FIELDS),
+    }, indent=2))
 
     # Algorithm-1 meta-sets:
     #   meta_train_set ← PRETRAIN window         (offline pretrain)

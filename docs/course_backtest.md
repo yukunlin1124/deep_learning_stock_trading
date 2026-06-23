@@ -33,7 +33,7 @@ causality as [deploy_today.py](../src/scripts/deploy_today.py).
 
 ## Cross-run comparison
 
-All 14 runs evaluated on the **operational window 2024-01-02 → 2026-04-30**
+All 15 runs evaluated on the **operational window 2024-01-02 → 2026-04-30**
 (560 trading days), initial cash NT$100M (framework units = 100k):
 
 | Run | Label h | Universe | Mode | Cum return | Final equity | Notes |
@@ -52,6 +52,7 @@ All 14 runs evaluated on the **operational window 2024-01-02 → 2026-04-30**
 | run12 | 1d | TW50 | live-IL **no best-state restore** | +35.7% | NT$ 135.7M | ablation: skip restore-to-best-IC after early stop |
 | run13 | 1d | TW50 | live-IL **patience=16** | +49.5% | NT$ 149.5M | ablation: bit-identical to run9 (best-state never beaten) |
 | run14 | 1d | TW50 | live-IL **r=5** | +40.1% | NT$ 140.1M | ablation: 5-day task span — more steps but noisier per-step preds |
+| run17 | 1d | TW50 | live-IL **qlib-exact Alpha360** | +31.5% | NT$ 131.5M | paper-faithful Alpha360 — wins +20% on pretrain val IC but the course 1-day lag erodes the intraday-shape signal (qlib gap was only −3 pp; course gap is −18 pp) |
 
 > **Table refreshed 2026-05-28**. Re-ran the course backtest for every
 > run with `--start-date 20240101` (operational window) against the

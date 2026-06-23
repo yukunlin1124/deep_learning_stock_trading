@@ -13,17 +13,15 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
+from src.scripts.deploy_today import parse_holdings
+from stock_api import Get_User_Stocks
 
-from src.scripts.deploy_today import parse_holdings  # noqa: E402
-from stock_api import Get_User_Stocks  # noqa: E402
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 OUT_BASE = PROJECT_ROOT / "src" / "output"
 

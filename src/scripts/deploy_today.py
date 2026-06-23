@@ -56,7 +56,6 @@ import pandas as pd
 import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.io import fetch_range
 from src.data.handler import (
@@ -120,7 +119,18 @@ def load_artifacts(device: torch.device, run_dir: Path) -> tuple:
     universe = universe_blob["codes"]
 
     bt_cfg = json.loads((run_dir / "bt_config.json").read_text())
-    return model, norm_stats, universe, bt_cfg
+
+    # Detect Alpha360 feature scheme. New runs (run17+) write this file.
+    # Legacy runs (1-16) didn't have a scheme flag and used per-field
+    # normalization; default to that for backward compat.
+    scheme_path = run_dir / "feature_scheme.json"
+    if scheme_path.exists():
+        feature_mode = json.loads(scheme_path.read_text()).get("mode", "qlib")
+    else:
+        feature_mode = "per_field"
+    print(f"      feature scheme: {feature_mode}")
+
+    return model, norm_stats, universe, bt_cfg, feature_mode
 
 
 # ----------------- inference -----------------
@@ -130,9 +140,14 @@ def predict_for_yesterday(
     norm_stats,
     universe: list[str],
     device: torch.device,
+    feature_mode: str = "qlib",
 ) -> pd.DataFrame:
     """Build features at lag-0 = the most recent cached bar (= yesterday's close)
     and return predictions per stock.
+
+    `feature_mode` must match the scheme the run was trained with
+    ("qlib" for run17+, "per_field" for runs 1-16). Wrong mode = silent
+    feature distortion → garbage predictions.
 
     Returns: DataFrame(code, asof, pred, prev_close)
     """
@@ -147,7 +162,7 @@ def predict_for_yesterday(
         if len(df) < SEQ_LEN + 1:
             print(f"[skip] {code}: only {len(df)} bars (need >= {SEQ_LEN + 1})")
             continue
-        feat = compute_alpha360(df, pred_h=1).tail(1)  # pred horizon irrelevant here
+        feat = compute_alpha360(df, pred_h=1, mode=feature_mode).tail(1)  # pred horizon irrelevant here
         if feat.empty:
             continue
         rows.append({
@@ -335,10 +350,13 @@ def plan_orders(
 ) -> list[IntendedOrder]:
     """Plan orders for today.
 
-    cash: liquid cash available for new buys (NT$). Pass the value shown on
-    the course website. Slot per buy is cash * risk_degree / len(buys)
-    (conservative: does NOT pre-add expected sell proceeds, unlike the
-    qlib backtest which assumes today's sells fill first).
+    cash: liquid cash currently available (NT$). Pass the value shown on
+    the course website. Today's planned SELLs add their expected gross
+    proceeds to this number BEFORE sizing the buy slot — same convention
+    as qlib's TopkDropoutStrategy (assumes today's sells fill first, so
+    that cash is recyclable into the same day's buys).
+
+    Effective slot = (cash + Σ sell_proceeds) * risk_degree / len(buys).
 
     today_ranges: optional `--cheat` payload from fetch_today_intraday().
     When provided:
@@ -378,19 +396,12 @@ def plan_orders(
 
     prev_close = dict(zip(preds_df["code"], preds_df["prev_close"]))
     orders: list[IntendedOrder] = []
-
-    # qlib's slot formula: cash * risk_degree / len(buys).
-    # Conservative: does NOT pre-add expected sell proceeds.
-    n_buys = len(buy_candidates)
-    slot_capital = (cash * risk_degree / n_buys) if n_buys > 0 else 0.0
-    if n_buys > 0:
-        print(f"      sizing: cash={cash:,.0f}  risk={risk_degree}  "
-              f"len(buys)={n_buys}  -> slot={slot_capital:,.0f} NT$/name "
-              f"(conservative: not assuming today's sells fill)")
-
     cheat = today_ranges is not None
 
-    # SELL first
+    # ---- SELL first; accumulate expected proceeds so they're recyclable
+    # into today's buy slots (mirrors qlib's TopkDropoutStrategy assumption
+    # that sells fill before buys settle).
+    sell_proceeds = 0.0
     for code in sell_candidates:
         lots = int(holdings[code] // SHARES_PER_LOT)
         if lots <= 0:
@@ -412,8 +423,18 @@ def plan_orders(
         if sell_price <= 0:
             continue
         orders.append(IntendedOrder("SELL", code, lots, sell_price, limit_source))
+        sell_proceeds += sell_price * lots * SHARES_PER_LOT    # GROSS, no cost subtracted
 
-    # BUY
+    # ---- Compute buy slot AFTER sells are known
+    n_buys = len(buy_candidates)
+    effective_cash = cash + sell_proceeds
+    slot_capital = (effective_cash * risk_degree / n_buys) if n_buys > 0 else 0.0
+    if n_buys > 0:
+        print(f"      sizing: cash={cash:,.0f}  + sell_proceeds={sell_proceeds:,.0f}"
+              f"  = effective={effective_cash:,.0f}  risk={risk_degree}  "
+              f"len(buys)={n_buys}  -> slot={slot_capital:,.0f} NT$/name")
+
+    # ---- BUY using slot informed by post-sell cash
     for code in buy_candidates:
         if cheat:
             rng = today_ranges.get(code)
@@ -540,14 +561,15 @@ def main() -> None:
     print(f"logging session to {deploy_log_path}")
 
     print(f"\n[1/4] loading artifacts from {run_dir.name}/ (model, norm stats, universe, bt_config)...")
-    model, norm_stats, universe, bt_cfg = load_artifacts(device, run_dir)
+    model, norm_stats, universe, bt_cfg, feature_mode = load_artifacts(device, run_dir)
     if args.n_drop is not None:
         print(f"      OVERRIDE: n_drop {bt_cfg.get('n_drop')} -> {args.n_drop} (CLI flag)")
         bt_cfg["n_drop"] = args.n_drop
     print(f"      universe size: {len(universe)}, bt_cfg: {bt_cfg}")
 
     print("\n[2/4] running inference on yesterday's features...")
-    preds = predict_for_yesterday(model, norm_stats, universe, device)
+    preds = predict_for_yesterday(model, norm_stats, universe, device,
+                                  feature_mode=feature_mode)
     asof = preds["asof"].iloc[0]
     print(f"      asof (= 'yesterday' = lag-0): {pd.Timestamp(asof).date()}, "
           f"got predictions for {len(preds)} stocks")

@@ -32,18 +32,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 from pathlib import Path
 
 import pandas as pd
 
+from src.data.io import CACHE_DIR
+from src.data.universe import get_index_universe_codes
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.data.io import CACHE_DIR  # noqa: E402
-from src.data.universe import get_index_universe_codes  # noqa: E402
-
 TEJ_DIR = PROJECT_ROOT / "src" / "data" / "stock_data_all"
 CACHE_DIR.mkdir(exist_ok=True)
 

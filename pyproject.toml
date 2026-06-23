@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deep_learning_stock_trading"
+version = "0.1.0"
+description = "DoubleAdapt + GRU + Alpha360 pipeline for TWSE virtual trading."
+requires-python = ">=3.11"
+
+# Runtime dependencies are managed via requirements.txt (PyTorch needs an
+# --extra-index-url that pyproject.toml can't express). This file exists
+# only to register `src` as an importable package via `pip install -e .`.
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+# Pylance / Pyright can't trace through setuptools' editable MetaPathFinder
+# (used by `pip install -e ./stock_project_for_class`), so point it at the
+# source directory directly to resolve `import stock_api`.
+[tool.pyright]
+extraPaths = ["./stock_project_for_class"]

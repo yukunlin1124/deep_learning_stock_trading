@@ -42,7 +42,6 @@ import pandas as pd
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 FRAMEWORK_ROOT = PROJECT_ROOT / "stock_project_for_class" / "backtest_package" / "stock_backtest_v1"
 sys.path.insert(0, str(FRAMEWORK_ROOT))

@@ -45,7 +45,7 @@ QlibBTConfig(
 
 ## Cross-run comparison
 
-All 14 runs evaluated under the **same** config above, **same** window
+All 17 runs evaluated under the **same** config above, **same** window
 (2024-01-01 → 2026-04-30 ≈ 560 trading days, the operational period common
 to every run's `predictions.csv`), **same** bars (current TEJ-adjusted
 cache):
@@ -66,6 +66,9 @@ cache):
 | run12 | 1d | TW50 | live-IL **no best-state restore** | 1,124 | +42.2% | +0.822 | −31.7% | 54.9 | 1.70 | 142.0M |
 | run13 | 1d | TW50 | live-IL **patience=16** | 1,128 | +56.9% | +1.242 | −14.1% | 59.4 | 2.10 | 156.7M |
 | run14 | 1d | TW50 | live-IL **r=5 task span** | 1,156 | +26.4% | +0.627 | −27.7% | 59.0 | 1.69 | 126.2M |
+| run15 | 1d | TW50 | live-IL **lr_psi=1e-2** | 1,128 | +18.9% | +0.510 | −23.0% | 55.1 | 1.62 | 118.9M |
+| run16 | 1d | **BOTH** | live-IL **lr_psi=1e-2** | 1,126 | +30.8% | +0.720 | −25.8% | 60.0 | 1.62 | 130.8M |
+| **run17** | 1d | TW50 | live-IL **qlib-exact Alpha360** | 1,128 | +53.4% | +1.227 | −16.5% | **62.3** | **2.17** | 153.4M |
 
 > **Table refreshed 2026-05-28**. Numbers re-derived by replaying every
 > run's `predictions.csv` through the current `run_qlib_backtest_from_predictions`

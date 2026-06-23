@@ -33,7 +33,6 @@ Run:
 from __future__ import annotations
 
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -42,7 +41,6 @@ import pandas as pd
 import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.io import fetch_range, CACHE_DIR
 from src.data.handler import (

@@ -54,5 +54,9 @@
   "run14": {
     "cum_return_pct": 40.05,
     "final_equity_nt$M": 140.0509
+  },
+  "run17": {
+    "cum_return_pct": 31.53,
+    "final_equity_nt$M": 131.5
   }
 }
