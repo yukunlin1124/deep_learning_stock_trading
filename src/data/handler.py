@@ -38,6 +38,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from src.utils.progress import pbar
+
 SEQ_LEN = 60
 N_FIELDS = 6
 FEATURE_DIM = SEQ_LEN * N_FIELDS  # 360
@@ -153,7 +155,8 @@ def build_panel(bars: dict[str, pd.DataFrame],
                 pred_h: int = PRED_HORIZON,
                 mode: str = FEATURE_MODE) -> PanelTensors:
     pieces = []
-    for code, df in bars.items():
+    for code, df in pbar(bars.items(), total=len(bars),
+                         desc="building Alpha360", unit="stock"):
         if df.empty or len(df) < SEQ_LEN + pred_h:
             continue
         feat = compute_alpha360(df, pred_h=pred_h, mode=mode)

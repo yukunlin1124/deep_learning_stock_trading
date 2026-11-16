@@ -24,6 +24,7 @@ from src.data.handler import PanelTensors
 from src.model.double_adapt import DoubleAdapt
 from src.evaluate.metrics import cross_sectional_ic
 from src.trainer.maml import FOMAMLConfig, panel_to_task, fomaml_step
+from src.utils.progress import pbar, log, n_walk_steps
 
 
 @dataclass
@@ -38,7 +39,8 @@ def run_incremental(
     fcfg: FOMAMLConfig,
     icfg: ILConfig,
     device: torch.device,
-    log_fn=print,
+    log_fn=log,
+    desc: str = "IL",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     optim_phi = torch.optim.Adam(model.ma_parameters(), lr=fcfg.lr_phi,
                                  weight_decay=fcfg.weight_decay)
@@ -55,14 +57,17 @@ def run_incremental(
     preds_rows = []
     step = 0
     i = test_first_idx
+    bar = pbar(total=n_walk_steps(udates, test_first_idx, fcfg.r, end),
+               desc=desc, unit="step")
     while i + fcfg.r <= len(udates):
         train_start = udates[i - fcfg.r]
+        if udates[i] > end:
+            break
+        bar.update(1)
         task = panel_to_task(panel, i - fcfg.r, fcfg.r, device)
         if task is None:
             i += fcfg.r; step += 1
             continue
-        if udates[i] > end:
-            break
 
         optim_phi.zero_grad(set_to_none=True)
         optim_psi.zero_grad(set_to_none=True)
@@ -98,8 +103,10 @@ def run_incremental(
                f"{pd.Timestamp(udates[min(i+fcfg.r-1, len(udates)-1)]).date()} "
                f"n_train={task.x_train.shape[0]:5d} n_test={task.x_test.shape[0]:5d} "
                f"loss={test_loss:.5f} ic={ic:+.4f} ric={ric:+.4f}")
+        bar.set_postfix(t=str(pd.Timestamp(udates[i]).date()), ic=f"{ic:+.4f}")
 
         i += fcfg.r
         step += 1
 
+    bar.close()
     return pd.DataFrame(rows), pd.DataFrame(preds_rows)

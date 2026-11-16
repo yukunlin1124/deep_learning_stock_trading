@@ -2,7 +2,7 @@
 
 Bridge that runs DoubleAdapt predictions through the course's official
 `BacktestSystem` (from
-[stock_project_for_class/backtest_package/](../stock_project_for_class/backtest_package/)).
+[thirdparty/stock_project_for_class/backtest_package/](../thirdparty/stock_project_for_class/backtest_package/)).
 Results are uploadable to the leaderboard at `140.116.86.242:8081`.
 
 **Source of predictions:** this script reads `predictions.csv` from a run
@@ -19,8 +19,8 @@ re-run inference or fine-tune** — the model isn't even loaded.
 | Property | Value |
 |---|---|
 | File | [src/evaluate/run_course_backtest.py](../src/evaluate/run_course_backtest.py) |
-| Framework | `BacktestSystem` from `stock_project_for_class/backtest_package/` |
-| Trade price | today's close (matches [examplebacktest.py](../stock_project_for_class/backtest_package/stock_backtest_v1/examplebacktest.py)) |
+| Framework | `BacktestSystem` from `thirdparty/stock_project_for_class/backtest_package/` |
+| Trade price | today's close (matches [examplebacktest.py](../thirdparty/stock_project_for_class/backtest_package/stock_backtest_v1/examplebacktest.py)) |
 | Fill rule | `low ≤ price ≤ high` (framework check; trivially true at close) |
 | **Costs** | **zero** — the course framework charges no commission, no tax, no min |
 | Slot sizing | qlib exact: `cash * 0.95 / len(buys)` |
@@ -56,7 +56,7 @@ All 15 runs evaluated on the **operational window 2024-01-02 → 2026-04-30**
 
 > **Table refreshed 2026-05-28**. Re-ran the course backtest for every
 > run with `--start-date 20240101` (operational window) against the
-> framework's bar cache pre-populated from `src/_cache/`. Numbers above
+> framework's bar cache pre-populated from `data/interim/`. Numbers above
 > are from the framework's `total return` field; final equity uses the
 > framework's implicit 1000× scaling (100k framework units = NT$100M
 > starting cash).
@@ -97,11 +97,11 @@ course doesn't expose per-day equity — only the final P&L scalar.
 ### Dry (no leaderboard upload)
 
 ```powershell
-# Default: read output/CURRENT, full IL window in predictions.csv
-.venv/Scripts/python.exe src/evaluate/run_course_backtest.py
+# Default: read models/CURRENT, full IL window in predictions.csv
+python src/evaluate/run_course_backtest.py
 
 # Specific run + operational window
-.venv/Scripts/python.exe src/evaluate/run_course_backtest.py --run run6 `
+python src/evaluate/run_course_backtest.py --run run6 `
     --start-date 20240101 --end-date 20260522
 ```
 
@@ -110,12 +110,12 @@ course doesn't expose per-day equity — only the final P&L scalar.
 ```powershell
 $env:TWSE_ACCOUNT = "<your_account>"
 $env:TWSE_PASSWORD = "<your_password>"
-.venv/Scripts/python.exe src/evaluate/run_course_backtest.py --upload `
+python src/evaluate/run_course_backtest.py --upload `
     --strategy-name "DoubleAdapt run6 (TEJ)"
 ```
 
 The script:
-1. Pre-builds the framework's local stock cache from [src/_cache/](../src/_cache/) so it doesn't redownload from the course API
+1. Pre-builds the framework's local stock cache from [data/interim/](../data/interim/) so it doesn't redownload from the course API
 2. Writes `course_backtest.xlsx` to the run dir
 3. Optionally POSTs summary + per-trade detail to the leaderboard API
 
@@ -123,7 +123,7 @@ The script:
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--run` | reads `output/CURRENT` | which `runN/` to use |
+| `--run` | reads `models/CURRENT` | which `runN/` to use |
 | `--start-date` | min date in `predictions.csv` | YYYYMMDD |
 | `--end-date` | max date in `predictions.csv` | YYYYMMDD |
 | `--cash` | `100_000` (framework units = NT$100M at framework's implicit 1000× scaling) | starting cash |
@@ -135,14 +135,14 @@ The script:
 
 ```powershell
 foreach ($run in @("run1","run2","run3","run4","run5","run6")) {
-    .venv/Scripts/python.exe src/evaluate/run_course_backtest.py `
+    python src/evaluate/run_course_backtest.py `
         --run $run --start-date 20240101 `
         --strategy-name "DoubleAdapt $run"
 }
 ```
 
 Each call rebuilds the framework's local stock cache (~5s) and writes the
-per-run Excel output to `src/output/{run}/course_backtest.xlsx`.
+per-run Excel output to `models/{run}/course_backtest.xlsx`.
 
 ## Caveats
 
@@ -155,7 +155,7 @@ per-run Excel output to `src/output/{run}/course_backtest.xlsx`.
 - **1-day causal lag** is stricter than qlib's same-day fill. This matches
   the deploy reality but reduces operational-window absolute returns.
 - **Framework reads bars from its own `./tmp/stock_data.csv` cache** — we
-  pre-populate it from `src/_cache/` to avoid the slow per-stock course-API
+  pre-populate it from `data/interim/` to avoid the slow per-stock course-API
   download.
 
 ## Related

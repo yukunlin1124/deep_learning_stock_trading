@@ -1,7 +1,7 @@
 """DoubleAdapt: FeatureAdapter (G) + LabelAdapter (H) + base GRU.
 
 Architecture mirrors qlib reference at
-double_adapter/qlib/qlib/contrib/meta/incremental/net.py exactly:
+thirdparty/qlib/qlib/contrib/meta/incremental/net.py exactly:
 
   * FeatureAdapter: per-time-step cosine-similarity gating against learned
     prototypes; multi-head residual transform with shared (across time) head

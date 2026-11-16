@@ -1,0 +1,37 @@
+%% DoubleAdapt 三階段訓練時程
+%% Render: mmdc -i training_timeline.mmd -o training_timeline.png -w 1600 -H 700
+
+flowchart TB
+    subgraph S1["階段 1：離線預訓練 (Offline Pretrain)<br/>2016-01 → 2021-12 (T_train，meta_train_set)<br/>val: 2022-01 → 2023-12 (T_valid，read-only)"]
+        S1A["從 6 年面板隨機取樣 1000 個任務 / epoch<br/>每 epoch 做 FOMAML 雙層更新<br/>對 (φ, ψ) 同時 Adam step"]
+        S1B["每 epoch 結束在 val 集計算 IC<br/>early-stop patience = 8<br/>結束時 load_state_dict(best_state) 還原至最佳 epoch"]
+        S1A --> S1B
+    end
+
+    subgraph S2["階段 2：暖機線上學習 (Warmup IL)<br/>2022-01 → 2024-01 (重新走過 T_valid 視窗)"]
+        S2A["以 r=20 交易日為步長前推<br/>共 25 次滾動 FOMAML 步<br/>真正執行 optim.step() — 與部署時相同"]
+        S2B["輸出 final_prep.pt<br/>準備好的適配器 (φ, ψ) 進入線上"]
+        S2A --> S2B
+    end
+
+    subgraph S3["階段 3：線上學習 + 回測 (Live-IL Backtest)<br/>2024-01 → 至今 (T_test，meta_test_set)"]
+        S3A["每 r=20 交易日做一次 FOMAML 雙層更新<br/>共 28 次步 (run9)<br/>同步進行 TopkDropoutStrategy 投組模擬"]
+        S3B["輸出 final.pt + predictions.csv + equity.csv<br/>= 部署用模型 + 回測產出物"]
+        S3A --> S3B
+    end
+
+    Init["DoubleAdapt 模型初始化<br/>(φ, ψ) 隨機初始<br/>~51k 個參數"]
+    Deploy["可部署模型<br/>送入 deploy_today.py<br/>每日 12:00 推論 + 下單"]
+
+    Init --> S1
+    S1 -->|"φ, ψ at best val IC"| S2
+    S2 -->|"φ, ψ (更熱身的適配器)"| S3
+    S3 --> Deploy
+
+    classDef stageClass fill:#f0f8ff,stroke:#0066cc,stroke-width:2px
+    classDef initClass fill:#fff4e6,stroke:#ff8800,stroke-width:2px
+    classDef deployClass fill:#e6ffe6,stroke:#00aa00,stroke-width:2px
+
+    class S1,S2,S3 stageClass
+    class Init initClass
+    class Deploy deployClass

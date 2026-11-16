@@ -1,7 +1,7 @@
 """TWSE training universe — official TEJ index masks (TW50 + TM100).
 
 Two indices are supported, both loaded from TEJ's monthly snapshot CSVs
-under src/data/stock_data_all/:
+under data/raw/TEJ/:
 
   TW50  — FTSE TWSE Taiwan 50 (the top-50 large-caps; ~50 names per month,
           ~99 unique codes across 2011-2026)
@@ -25,17 +25,12 @@ from pathlib import Path
 
 import pandas as pd
 
-# Active training universe size per period (informational; the actual size
-# comes from the index file — TW50 = 50, TM100 = 100).
-TOP_N = 50
-
-REBALANCE_PER_YEAR = 2          # semi-annual rebalance for build_universe_schedule_*
-MIN_TRAILING_ROWS = 10          # cold-start safety for any liquidity helper
+REBALANCE_PER_YEAR = 2          # semi-annual rebalance for build_universe_schedule
 
 
 # ---------- TEJ index CSV loader (TW50 / TM100) ----------
 
-_STOCK_DATA_DIR = Path(__file__).resolve().parent / "stock_data_all"
+from src.config import TEJ_DIR as _STOCK_DATA_DIR  # data/raw/TEJ
 _INDEX_PATHS = {
     "TW50":  _STOCK_DATA_DIR / "TW50.csv",
     "TM100": _STOCK_DATA_DIR / "TM100.csv",
@@ -163,34 +158,6 @@ def get_index_universe_codes(index_name: str) -> list[str]:
     return sorted(union)
 
 
-# ---------- TW50 wrappers (back-compat with existing imports) ----------
-
-def get_tw50_at(asof: str | pd.Timestamp) -> list[str]:
-    return get_index_codes_at("TW50", asof)
-
-
-def get_tw50_weights_at(asof: str | pd.Timestamp) -> dict[str, float]:
-    return get_index_weights_at("TW50", asof)
-
-
-def get_tw50_universe_codes() -> list[str]:
-    return get_index_universe_codes("TW50")
-
-
-# ---------- TM100 wrappers ----------
-
-def get_tm100_at(asof: str | pd.Timestamp) -> list[str]:
-    return get_index_codes_at("TM100", asof)
-
-
-def get_tm100_weights_at(asof: str | pd.Timestamp) -> dict[str, float]:
-    return get_index_weights_at("TM100", asof)
-
-
-def get_tm100_universe_codes() -> list[str]:
-    return get_index_universe_codes("TM100")
-
-
 # ---------- Rebalance calendar + schedule builder ----------
 
 def rebalance_dates(start: str, end: str,
@@ -228,30 +195,6 @@ def build_universe_schedule(index_name: str, start: str, end: str,
             "weights": weights,
         })
     return pd.DataFrame(rows)
-
-
-def build_universe_schedule_tw50(start: str, end: str,
-                                  rebalances_per_year: int = REBALANCE_PER_YEAR,
-                                  ) -> pd.DataFrame:
-    return build_universe_schedule("TW50", start, end, rebalances_per_year)
-
-
-def build_universe_schedule_tm100(start: str, end: str,
-                                   rebalances_per_year: int = REBALANCE_PER_YEAR,
-                                   ) -> pd.DataFrame:
-    return build_universe_schedule("TM100", start, end, rebalances_per_year)
-
-
-def active_codes_for_date(date: pd.Timestamp, schedule: pd.DataFrame) -> set[str]:
-    """Which codes were active on the given date, per the schedule."""
-    if schedule.empty:
-        return set()
-    asofs = pd.to_datetime(schedule["asof"])
-    mask = asofs <= date
-    if not mask.any():
-        return set(schedule.iloc[0]["codes"])
-    idx = int(mask.values.nonzero()[0][-1])
-    return set(schedule.iloc[idx]["codes"])
 
 
 if __name__ == "__main__":

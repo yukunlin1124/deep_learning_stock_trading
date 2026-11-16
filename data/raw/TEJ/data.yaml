@@ -1,0 +1,101 @@
+# TEJ (Taiwan Economic Journal) raw data: train / val / test layout.
+#
+# The split boundaries mirror the phase constants in src/scripts/train.py
+# (PRETRAIN_*, VALIDATION_*, ONLINE_TRAINING_*). If you change them there,
+# move the files here and update this file too. Nothing parses this file at
+# runtime: src/scripts/import_tej.py finds price files by searching every
+# split folder listed under `splits`.
+
+name: TEJ Taiwan equities daily bars
+source: TEJ (Taiwan Economic Journal) export
+root: TEJ                # repo root, next to src/
+encoding: cp950          # Big5; read with pd.read_csv(..., encoding="cp950")
+frequency: daily
+markets: [TSE, OTC]      # whole-market export; filtered to TW50/TM100 at import
+file_pattern: "{year}_{half}.csv"   # half in {H1, H2}
+
+splits:
+  train:
+    dir: train
+    role: offline pretraining (DoubleAdapt meta_train_set)
+    used_window: [2016-01-01, 2021-12-31]   # train.py PRETRAIN_START..PRETRAIN_END
+    file_range: [2011_H1, 2021_H2]
+    note: >-
+      The 2011-2015 files are kept here as extra history but are NOT loaded by
+      default (train.py HISTORY_START = 2016-01-01, import_tej.py
+      --since-year 2016).
+    files: 22
+    trading_days: 2703          # 1468 of them in the used 2016-2021 window
+    rows: 4284214               # 2484523 of them in 2016-2021
+  val:
+    dir: val
+    role: >-
+      early stopping / best checkpoint during pretraining, then re-fed through
+      DoubleAdapt as the IL warmup ("final preparation", meta_valid_set)
+    used_window: [2022-01-01, 2023-12-31]   # train.py VALIDATION_START..VALIDATION_END
+    file_range: [2022_H1, 2023_H2]
+    files: 4
+    trading_days: 485
+    rows: 890185
+  test:
+    dir: test
+    role: >-
+      out-of-sample online phase: qlib backtest with live incremental learning
+      (fine-tunes every r=20 trading days on data already seen)
+    used_window: [2024-01-01, auto]          # train.py ONLINE_TRAINING_START..END (auto = last bar)
+    file_range: [2024_H1, 2026_H1]
+    last_date: 2026-05-26
+    files: 5
+    trading_days: 577
+    rows: 1100368
+
+# Price file columns (Chinese headers in the file; English meaning here).
+# Prices are split- and dividend-adjusted with a separate factor per stock.
+price_columns:
+  - {name: 代號,            meaning: stock code}
+  - {name: 名稱,            meaning: stock name}
+  - {name: 年月日,          meaning: date (YYYY/MM/DD)}
+  - {name: 開盤價(元),      meaning: open (adjusted)}
+  - {name: 最高價(元),      meaning: high (adjusted)}
+  - {name: 最低價(元),      meaning: low (adjusted)}
+  - {name: 收盤價(元),      meaning: close (adjusted)}
+  # NOTE: per the header these two are traded value and market cap, but
+  # import_tej.py maps them to volume (thousand shares) and turnover
+  # (million NT$). That mapping has not been checked against these headers.
+  - {name: 成交值(千元),    meaning: traded value (thousand NT$)}
+  - {name: 市值(百萬元),    meaning: market cap (million NT$)}
+  - {name: 本益比-TSE,      meaning: P/E (TSE)}
+  - {name: 本益比-TEJ,      meaning: P/E (TEJ)}
+  - {name: 股價淨值比-TSE,  meaning: P/B (TSE)}
+  - {name: 股價淨值比-TEJ,  meaning: P/B (TEJ)}
+  - {name: 股價營收比-TEJ,  meaning: P/S (TEJ)}
+  - {name: 股利殖利率-TSE,  meaning: dividend yield}
+  - {name: 漲跌停,          meaning: limit up/down flag}
+  - {name: 注意股票(A),     meaning: attention-stock flag}
+  - {name: 處置股票(D),     meaning: disposition-stock flag}
+  - {name: 全額交割(Y),     meaning: full-delivery flag}
+  - {name: 市場別,          meaning: market (TSE / OTC)}
+
+# Index membership snapshots. They cover all three periods, so they sit at the
+# root instead of inside a split. Loaded by src/data/universe.py.
+index_files:
+  TW50:
+    file: TW50.csv
+    index: FTSE TWSE Taiwan 50
+    snapshots: monthly
+    date_range: [2011-01-28, 2026-04-30]
+    rows: 9200
+  TM100:
+    file: TM100.csv
+    index: FTSE TWSE Taiwan Mid-Cap 100
+    snapshots: monthly
+    date_range: [2011-01-28, 2026-04-30]
+    rows: 18400
+  format: >-
+    row 1 = title, row 2 = header (年月日, 成份股, 指數因子, 公眾流通係數,
+    比重上限因子, 股數, 指數基值, 前日調整收盤價, 前日市值比重), then one row
+    per (snapshot date, constituent)
+
+downstream:
+  importer: src/scripts/import_tej.py   # data/raw/TEJ/{split}/*.csv -> data/interim/{code}_{year}.csv
+  reader: src/data/io.py                # all training/backtest code reads the cache

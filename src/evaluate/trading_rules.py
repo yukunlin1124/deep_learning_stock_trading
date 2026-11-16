@@ -1,10 +1,7 @@
-"""TWSE tick rounding + cost model. Mirrors qlib's exchange-rule helpers."""
+"""TWSE tick rounding + lot size. (Trading costs live in backtest_qlib._COST_TABLES.)"""
 from __future__ import annotations
 import math
 
-COMMISSION_RATE = 0.001425
-COMMISSION_MIN = 20.0
-TAX_RATE = 0.003
 SHARES_PER_LOT = 1000
 
 
@@ -31,23 +28,3 @@ def round_sell(price: float) -> float:
     t = tick_size(price)
     return math.ceil(price / t - 1e-9) * t
 
-
-def commission(notional: float) -> float:
-    return max(notional * COMMISSION_RATE, COMMISSION_MIN)
-
-
-def buy_cost(price: float, lots: int) -> float:
-    notional = price * SHARES_PER_LOT * lots
-    return notional + commission(notional)
-
-
-def sell_proceeds(price: float, lots: int) -> float:
-    notional = price * SHARES_PER_LOT * lots
-    return notional - commission(notional) - notional * TAX_RATE
-
-
-def round_trip_cost_bps(price: float) -> float:
-    notional = price * SHARES_PER_LOT
-    b = commission(notional)
-    s = commission(notional) + notional * TAX_RATE
-    return (b + s) / notional * 10000

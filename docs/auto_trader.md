@@ -36,7 +36,7 @@ for the API call + retries.
 
 Predictions are computed using **only data available before today's open**,
 so there's no use of T's prices to decide T's orders. The
-[backtest](../src/evaluate/backtest.py) has a mild look-ahead (uses
+[backtest](../src/evaluate/backtest_qlib.py) has a mild look-ahead (uses
 T's preds to trade on T); the deployment loop fixes it by using T-1's preds
 for T's orders.
 
@@ -57,18 +57,18 @@ the forward pass. The model is frozen between FOMAML updates.
 After the scrape finishes:
 
 ```powershell
-.venv/Scripts/python.exe src/scripts/train.py
+python src/scripts/train.py
 ```
 
 This now writes (in addition to the IL/backtest artifacts):
 
 | File | Used by |
 |---|---|
-| `src/output/run{N}/final.pt` | model weights |
-| `src/output/run{N}/norm_stats.pkl` | RobustZScoreNorm `(median, MAD)` from pretrain |
-| `src/output/run{N}/active_universe.json` | the 50 stocks the model is scoring |
-| `src/output/run{N}/bt_config.json` | trading config (`top_k=10, n_drop=3, ...`) |
-| `src/output/CURRENT` | text file naming the active run (e.g. `run5`) |
+| `models/run{N}/final.pt` | model weights |
+| `models/run{N}/norm_stats.pkl` | RobustZScoreNorm `(median, MAD)` from pretrain |
+| `models/run{N}/active_universe.json` | the 50 stocks the model is scoring |
+| `models/run{N}/bt_config.json` | trading config (`top_k=10, n_drop=3, ...`) |
+| `models/CURRENT` | text file naming the active run (e.g. `run5`) |
 
 `train.py` auto-increments to the next available `run{N}/` and updates `CURRENT`
 to point at the new run. `deploy_today.py` reads `CURRENT` (or `--run runX` to override).
@@ -89,10 +89,10 @@ gitignored.
 
 ```powershell
 # Preview without submitting orders:
-.venv/Scripts/python.exe src/scripts/deploy_today.py --dry-run
+python src/scripts/deploy_today.py --dry-run
 
 # Live:
-.venv/Scripts/python.exe src/scripts/deploy_today.py
+python src/scripts/deploy_today.py
 ```
 
 ### 4. Schedule on Windows (Task Scheduler)
@@ -101,12 +101,12 @@ Action → Start a program:
 
 | Field | Value |
 |---|---|
-| Program | `C:\workspace\deep_learning_stock_trading\.venv\Scripts\python.exe` |
+| Program | `C:\Users\User\miniforge3\envs\dlst\python.exe` (the `dlst` conda env's interpreter) |
 | Arguments | `src/scripts/deploy_today.py` |
 | Start in | `C:\workspace\deep_learning_stock_trading` |
 
 Trigger: daily at **12:00**. To keep the cache current you need to drop a
-fresh TEJ half-year CSV into `src/data/stock_data_all/` and re-run
+fresh TEJ half-year CSV into `data/raw/TEJ/test/` and re-run
 `src/scripts/import_tej.py` (no longer a per-day network scrape — TEJ
 exports are typically downloaded weekly/monthly).
 
@@ -116,11 +116,11 @@ Skip weekends with the "Filter by days" condition (Monday-Friday only).
 
 ```cron
 # Trade at 12:00 weekdays
-0 12 * * 1-5  cd /path/to/deep_learning_stock_trading && TWSE_ACCOUNT=... TWSE_PASSWORD=... .venv/bin/python src/scripts/deploy_today.py --cash <NT$>
+0 12 * * 1-5  cd /path/to/deep_learning_stock_trading && TWSE_ACCOUNT=... TWSE_PASSWORD=... conda run -n dlst python src/scripts/deploy_today.py --cash <NT$>
 ```
 
 (Cache refresh is a manual step after dropping new TEJ files —
-`.venv/bin/python src/scripts/import_tej.py` — not automated on a cron schedule.)
+`conda run -n dlst python src/scripts/import_tej.py` — not automated on a cron schedule.)
 
 ## What the script does (step by step)
 
@@ -154,14 +154,14 @@ in 4 phases:
 [4/4] submit orders
        for SELL: Sell_Stock(account, password, code, lots, price)
        for BUY:  Buy_Stock(account, password, code, lots, price)
-       log every attempt to src/output/run{N}/orders_YYYYMMDD.csv
-       log every top-10 inference snapshot to src/output/run{N}/inferences_YYYYMMDD.csv
-       tee full stdout to src/logs/deploy_YYYYMMDD.log
+       log every attempt to models/run{N}/orders_YYYYMMDD.csv
+       log every top-10 inference snapshot to models/run{N}/inferences_YYYYMMDD.csv
+       tee full stdout to logs/deploy_YYYYMMDD.log
 ```
 
 ## Output
 
-`src/output/run{N}/orders_YYYYMMDD.csv` accumulates one row per attempted
+`models/run{N}/orders_YYYYMMDD.csv` accumulates one row per attempted
 order each run:
 
 | col | example |
@@ -217,6 +217,6 @@ This means:
 | Frequency | What | Why |
 |---|---|---|
 | Each trading day | `deploy_today.py --cash NT$X` at 12:00 | Submit fresh orders for the day |
-| Weekly / monthly | Drop fresh TEJ half-year CSV into `src/data/stock_data_all/`, run `import_tej.py` | Keep cache current; TEJ doesn't have a daily delta export |
+| Weekly / monthly | Drop fresh TEJ half-year CSV into `data/raw/TEJ/test/`, run `import_tej.py` | Keep cache current; TEJ doesn't have a daily delta export |
 | Every ~20 trading days | Re-run `train.py` | Roll one more FOMAML bi-level update into the model |
 | Every quarter | TW50/TM100 mask refresh — TEJ publishes a new monthly snapshot in `TW50.csv` / `TM100.csv`; just replace the file | Match TEJ's official rebalance schedule (see [model_env.md](model_env.md)) |

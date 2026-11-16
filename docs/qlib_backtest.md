@@ -197,8 +197,8 @@ import pickle
 
 # Load the post-warmup checkpoint + norm stats
 model = DoubleAdapt(seq_len=60, n_fields=6).to("cuda")
-model.load_state_dict(torch.load("src/output/run6/final_prep.pt"))
-norm = pickle.load(open("src/output/run6/norm_stats.pkl", "rb"))
+model.load_state_dict(torch.load("models/run6/final_prep.pt"))
+norm = pickle.load(open("models/run6/norm_stats.pkl", "rb"))
 
 # Load + featurize + normalize bars (same as train.py)
 bars = {c: fetch_range(c, "2022-01-01", "2026-05-31")
@@ -223,12 +223,12 @@ For comparing multiple runs' predictions through the same engine without
 re-training:
 
 ```powershell
-.venv/Scripts/python.exe -c "
+python -c "
 from src.evaluate.backtest_qlib import QlibBTConfig, run_qlib_backtest_from_predictions
 from src.data.io import fetch_range
 import pandas as pd
 
-preds = pd.read_csv('src/output/run6/predictions.csv', parse_dates=['date'])
+preds = pd.read_csv('models/run6/predictions.csv', parse_dates=['date'])
 preds['stock_code_id'] = preds['stock_code_id'].astype(str)
 preds = preds[preds.date >= '2024-01-01']
 
@@ -245,7 +245,7 @@ print(run_qlib_backtest_from_predictions(preds, bars, cfg).summary)
 ### Cross-run comparison (reproduces the table above)
 
 ```powershell
-.venv/Scripts/python.exe -c "
+python -c "
 import pandas as pd
 from src.evaluate.backtest_qlib import QlibBTConfig, run_qlib_backtest_from_predictions
 from src.data.io import fetch_range
@@ -254,13 +254,13 @@ CFG = QlibBTConfig(capital=1e8, top_k=10, n_drop=1, cost_alpha_bps=70,
                    costs='twse', deal_price='close', risk_degree=0.95)
 codes = set()
 for run in ['run1','run2','run3','run4','run5','run6','run7','run8','run9']:
-    df = pd.read_csv(f'src/output/{run}/predictions.csv')
+    df = pd.read_csv(f'models/{run}/predictions.csv')
     codes.update(df.stock_code_id.astype(str).unique())
 bars = {c: fetch_range(c, '2022-01-01', '2026-05-31') for c in codes}
 bars = {c: b for c, b in bars.items() if not b.empty}
 
 for run in ['run1','run2','run3','run4','run5','run6','run7','run8','run9']:
-    preds = pd.read_csv(f'src/output/{run}/predictions.csv', parse_dates=['date'])
+    preds = pd.read_csv(f'models/{run}/predictions.csv', parse_dates=['date'])
     preds['stock_code_id'] = preds['stock_code_id'].astype(str)
     preds = preds[preds.date >= '2024-01-01']
     s = run_qlib_backtest_from_predictions(preds, bars, CFG).summary

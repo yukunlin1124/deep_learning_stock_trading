@@ -38,6 +38,8 @@ from src.model.double_adapt import DoubleAdapt
 from src.trainer.maml import FOMAMLConfig
 from src.trainer.incremental import ILConfig, run_incremental
 from src.scripts.train import apply_time_varying_universe, HISTORY_START
+from src.utils.progress import pbar, log
+from src.config import MODELS_DIR
 
 
 def main() -> None:
@@ -47,7 +49,7 @@ def main() -> None:
                     help="print plan; do not mutate final.pt / il_log.csv / predictions.csv")
     args = ap.parse_args()
 
-    run_dir = PROJECT_ROOT / "src" / "output" / args.run
+    run_dir = MODELS_DIR / args.run
     if not run_dir.exists():
         sys.exit(f"missing run dir: {run_dir}")
 
@@ -79,11 +81,11 @@ def main() -> None:
     print(f"loading bars ({universe})...")
     bars = {}
     today = pd.Timestamp.today().normalize()
-    for code in get_index_universe_codes(universe):
+    for code in pbar(get_index_universe_codes(universe), desc="loading bars", unit="stock"):
         try:
             df = fetch_range(code, HISTORY_START, str(today.date()))
         except Exception as e:
-            print(f"  [skip] {code}: {e!r}")
+            log(f"  [skip] {code}: {e!r}")
             continue
         if df.empty or len(df) < SEQ_LEN + PRED_HORIZON + 1:
             continue

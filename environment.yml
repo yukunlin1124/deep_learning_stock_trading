@@ -1,0 +1,50 @@
+# Conda environment for the DoubleAdapt TWSE pipeline.
+#
+#   conda env create -f environment.yml
+#   conda activate dlst
+#
+# Update an existing env after editing this file:
+#   conda env update -f environment.yml --prune
+#
+# Conda supplies only the interpreter; every Python package comes from pip
+# wheels. This is deliberate: conda-forge's numpy/scipy BLAS builds (both MKL
+# and OpenBLAS) segfault in multi-threaded matmul on this machine, and mixing
+# conda BLAS with the pip torch wheel is a known source of DLL clashes. The pip
+# numpy/scipy wheels bundle their own OpenBLAS and work.
+#
+# PyTorch comes from the CUDA 12.8 wheel index (works for Blackwell GPUs like
+# RTX 50-series). The `+cu128` local tag pins that build: PyPI only carries
+# CPU wheels, so an unpinned `torch` silently resolves to a CPU build. For a
+# CPU-only machine, change it to plain `torch` and drop the index line.
+#
+# The two local packages (this repo's `src` and the coursework `stock_api`)
+# are installed editable, so `import src` / `import stock_api` work from
+# anywhere once the env is active. The course repo must already be cloned:
+#   git clone https://ciot.imis.ncku.edu.tw:25388/Amy/stock_project_for_class.git thirdparty/stock_project_for_class
+name: dlst
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      # Deep learning
+      - torch==2.11.0+cu128
+      # Core scientific stack
+      - numpy>=1.24
+      - pandas>=2.0
+      - scipy>=1.10
+      - scikit-learn>=1.3
+      - pyyaml
+      - matplotlib
+      # Gradient-boosted trees baseline (src/scripts/train_lgbm_baseline.py)
+      - lightgbm>=4.3
+      # HTTP for the TWSE API + yfinance for deploy_today.py --cheat
+      - requests>=2.31
+      - yfinance
+      # Progress bars
+      - tqdm>=4.66
+      # Local editable packages
+      - -e .
+      - -e ./thirdparty/stock_project_for_class

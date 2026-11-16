@@ -298,7 +298,7 @@ cycle for monthly retraining.
 
 | Diff vs run 9 | Why |
 |---|---|
-| **Strip `csrank_normalize_per_date(y)` from `fomaml_step`** at [src/trainer/maml.py:115-116](../src/trainer/maml.py#L115) — H now operates on raw next-day c2c returns directly | Paper-faithful: the DoubleAdapt paper's L_train, L_test, L_reg all compare predictions against raw y. CSRankNorm was a qlib stability trick added during the qlib port — see deviation #5 in [overview.md](overview.md) |
+| **Strip `csrank_normalize_per_date(y)` from `fomaml_step`** at [src/trainer/maml.py:121-122](../src/trainer/maml.py#L121-L122) — H now operates on raw next-day c2c returns directly | Paper-faithful: the DoubleAdapt paper's L_train, L_test, L_reg all compare predictions against raw y. CSRankNorm was a qlib stability trick added during the qlib port — see deviation #5 in [overview.md](overview.md) |
 | LRs **unchanged** from run9 (`lr_phi=lr_psi=1e-3`, `inner_lr=1e-3`) | Isolate the CSRankNorm effect from the LR-rescaling effect (those would need ~100-360× larger LRs to keep gradient magnitudes meaningful) |
 | Universe back to TW50; all other hyperparameters and the live-IL flow identical to run9 | Single-variable ablation |
 
@@ -345,7 +345,7 @@ Run11 is the "do (a) only" data point — answers the audit question
 
 | Diff vs run 9 | Why |
 |---|---|
-| **Comment out `model.load_state_dict(best_state)`** at [src/trainer/maml.py:237](../src/trainer/maml.py#L237). After pretrain, the model carries the **post-early-stop weights** (epoch 9, val IC ≈ 0.012) instead of being rolled back to the **best-IC weights** (epoch 1, val IC = 0.051). | Test how load-bearing the early-stop-rollback mechanism is. The pretrain trajectory through epoch 9 is bit-identical to run9 (same seed, same data). Only the Stage 1 → Stage 2 handoff differs. |
+| **Comment out `model.load_state_dict(best_state)`** at [src/trainer/maml.py:254](../src/trainer/maml.py#L254). After pretrain, the model carries the **post-early-stop weights** (epoch 9, val IC ≈ 0.012) instead of being rolled back to the **best-IC weights** (epoch 1, val IC = 0.051). | Test how load-bearing the early-stop-rollback mechanism is. The pretrain trajectory through epoch 9 is bit-identical to run9 (same seed, same data). Only the Stage 1 → Stage 2 handoff differs. |
 | CSRankNorm restored from run11; all other hyperparameters and flow identical to run9 | Single-variable ablation |
 
 **Effect:**
@@ -388,7 +388,7 @@ comment-out.
 
 | Diff vs run 9 | Why |
 |---|---|
-| `PretrainConfig.early_stop_patience` in [src/scripts/train.py:243](../src/scripts/train.py#L243): **8 → 16** | Test whether the early-stop budget is the limiting factor on pretrain quality |
+| `PretrainConfig.early_stop_patience` in [src/scripts/train.py:249](../src/scripts/train.py#L249): **8 → 16** | Test whether the early-stop budget is the limiting factor on pretrain quality |
 | Best-state restore at end of pretrain re-enabled (run12's `# load_state_dict(best_state)` was uncommented) | Otherwise identical to run9 |
 | Same seed, same data | First 9 epochs are bit-identical to run9; epochs 10-17 are new territory |
 
@@ -426,7 +426,7 @@ ablation.
 
 | Diff vs run 9 | Why |
 |---|---|
-| `FOMAMLConfig.r` in [src/scripts/train.py:242](../src/scripts/train.py#L242): **20 → 5** | Test whether more frequent meta-updates (4× more rolling steps, 5-day deployment window) helps the model track regime changes better |
+| `FOMAMLConfig.r` in [src/scripts/train.py:248](../src/scripts/train.py#L248): **20 → 5** | Test whether more frequent meta-updates (4× more rolling steps, 5-day deployment window) helps the model track regime changes better |
 | Warmup IL now does 97 rolling steps (vs 25); live-IL does 115 (vs 28) | Direct consequence of r=5 — each task spans only 10 days instead of 40 |
 | Each task has ~250 support + ~250 query rows (vs ~1000 each at r=20) | 50 stocks × 5 days = 250 rows per window |
 | All other hyperparameters identical to run9 | Single-variable ablation |
@@ -481,7 +481,7 @@ frequently as possible. Restored r=20 after the ablation.
 
 | Diff vs run 9 | Why |
 |---|---|
-| `FOMAMLConfig.lr_psi` in [src/scripts/train.py:252](../src/scripts/train.py#L252): **1e-3 → 1e-2** | Restore the paper-default 10× ratio (lr_psi = 10 × lr_phi). Run2's notes claimed this destabilized the pretrain → IL handoff; this retests with the 2026 pipeline (TEJ bars, 1-day labels, live-IL, Adam outer step). |
+| `FOMAMLConfig.lr_psi` in [src/scripts/train.py:248](../src/scripts/train.py#L248): **1e-3 → 1e-2** | Restore the paper-default 10× ratio (lr_psi = 10 × lr_phi). Run2's notes claimed this destabilized the pretrain → IL handoff; this retests with the 2026 pipeline (TEJ bars, 1-day labels, live-IL, Adam outer step). |
 | All other hyperparameters identical to run9; r restored to 20 from run14's r=5 | Single-variable ablation |
 
 **Effect:**
@@ -742,24 +742,24 @@ deployable thanks to the `feature_scheme.json` flag.
 
 | Path | What |
 |---|---|
-| [src/output/run1/](../src/output/run1/) | run 1 artifacts |
-| [src/output/run2/](../src/output/run2/) | run 2 |
-| [src/output/run3/](../src/output/run3/) | run 3 (qlib-backtest absolute-return leader) |
-| [src/output/run4/](../src/output/run4/) | run 4 |
-| [src/output/run5/](../src/output/run5/) | run 5 (course-backtest absolute-return leader) |
-| [src/output/run6/](../src/output/run6/) | run 6 (last replay-mode backtest) |
-| [src/output/run7/](../src/output/run7/) | run 7 (first live-IL backtest; last 20-day-label run on TW50) |
-| [src/output/run8/](../src/output/run8/) | run 8 (TM100 universe, live-IL backtest, 20-day label) |
-| [src/output/run9/](../src/output/run9/) | **run 9 — recommended production** (TW50, live-IL, paper-faithful 1-day label) |
-| [src/output/run10/](../src/output/run10/) | run 10 (BOTH universe — completes the universe ablation matrix under the 1-day label) |
-| [src/output/run11/](../src/output/run11/) | run 11 (paper-faithful no-CSRankNorm ablation — kept for evidence, not for deploy) |
-| [src/output/run12/](../src/output/run12/) | run 12 (no-best-state-restore ablation — kept for evidence, not for deploy) |
-| [src/output/run13/](../src/output/run13/) | run 13 (patience=16 ablation — bit-identical to run9 downstream; kept for completeness) |
-| [src/output/run14/](../src/output/run14/) | run 14 (r=5 task-span ablation — faster + better pretrain IC but worse trading; kept for evidence) |
-| [src/output/run15/](../src/output/run15/) | run 15 (lr_psi=1e-2 ablation on TW50 — Sharpe halves vs run9; kept for evidence) |
-| [src/output/run16/](../src/output/run16/) | run 16 (BOTH + lr_psi=1e-2 — diagonal of universe × lr_psi 2×2 ablation; shows the two knobs interact) |
-| [src/output/run17/](../src/output/run17/) | **run 17** (qlib-exact Alpha360 — paper-faithful normalization; +20% pretrain val IC, +17% RankICIR vs run9; Sharpe tied at 1.23) |
-| [src/output/CURRENT](../src/output/) | text file: `run17` (latest-trained — see "Choosing which run to deploy" below) |
+| [models/run1/](../models/run1/) | run 1 artifacts |
+| [models/run2/](../models/run2/) | run 2 |
+| [models/run3/](../models/run3/) | run 3 (qlib-backtest absolute-return leader) |
+| [models/run4/](../models/run4/) | run 4 |
+| [models/run5/](../models/run5/) | run 5 (course-backtest absolute-return leader) |
+| [models/run6/](../models/run6/) | run 6 (last replay-mode backtest) |
+| [models/run7/](../models/run7/) | run 7 (first live-IL backtest; last 20-day-label run on TW50) |
+| [models/run8/](../models/run8/) | run 8 (TM100 universe, live-IL backtest, 20-day label) |
+| [models/run9/](../models/run9/) | **run 9 — recommended production** (TW50, live-IL, paper-faithful 1-day label) |
+| [models/run10/](../models/run10/) | run 10 (BOTH universe — completes the universe ablation matrix under the 1-day label) |
+| [models/run11/](../models/run11/) | run 11 (paper-faithful no-CSRankNorm ablation — kept for evidence, not for deploy) |
+| [models/run12/](../models/run12/) | run 12 (no-best-state-restore ablation — kept for evidence, not for deploy) |
+| [models/run13/](../models/run13/) | run 13 (patience=16 ablation — bit-identical to run9 downstream; kept for completeness) |
+| [models/run14/](../models/run14/) | run 14 (r=5 task-span ablation — faster + better pretrain IC but worse trading; kept for evidence) |
+| [models/run15/](../models/run15/) | run 15 (lr_psi=1e-2 ablation on TW50 — Sharpe halves vs run9; kept for evidence) |
+| [models/run16/](../models/run16/) | run 16 (BOTH + lr_psi=1e-2 — diagonal of universe × lr_psi 2×2 ablation; shows the two knobs interact) |
+| [models/run17/](../models/run17/) | **run 17** (qlib-exact Alpha360 — paper-faithful normalization; +20% pretrain val IC, +17% RankICIR vs run9; Sharpe tied at 1.23) |
+| [models/CURRENT](../models/) | text file: `run17` (latest-trained — see "Choosing which run to deploy" below) |
 
 Each `runN/` contains: `final.pt`, `pretrained.pt`, `norm_stats.pkl`,
 `predictions.csv` (date, stock_code_id, pred, actual), `bt_config.json`,
@@ -781,7 +781,7 @@ also have `final_prep.pt` (post-warmup checkpoint) and `warmup_log.csv`.
 | Paper-faithful no-CSRankNorm (research-only) | run 11 — strictly worse than run9 in this LR regime; kept for the ablation evidence |
 | Backwards compat with prior `deploy_today.py` runs | run 5 (last yfinance/Wikipedia model) |
 
-`output/CURRENT` is `run11` (latest-trained, ablation) — [deploy_today.py](../src/scripts/deploy_today.py)
+`models/CURRENT` is `run11` (latest-trained, ablation) — [deploy_today.py](../src/scripts/deploy_today.py)
 picks it up by default. **Bump to `run9` for production deploys** —
 same drawdown as run10 but with higher Sharpe and faster retraining,
 and substantially better than run11 on every metric except deviation

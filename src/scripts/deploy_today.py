@@ -2,7 +2,7 @@
 
 Schedule (typical):
    T-1 15:30-16:00  TWSE settlement window (course system updates bars)
-   weekly/monthly   drop fresh TEJ half-year CSV into src/data/stock_data_all/
+   weekly/monthly   drop fresh TEJ half-year CSV into data/raw/TEJ/test/
                     and re-run: python src/scripts/import_tej.py
    T   12:00        run THIS script -- 1 hour before order window closes:
                                       python src/scripts/deploy_today.py --cash NT$X
@@ -21,7 +21,7 @@ Cheat mode (--cheat):
      sanity-checking ("what's the best execution we could get today?") —
      NOT for live trading. Stocks without today's yfinance bar are skipped.
 
-Trading config is loaded from src/output/bt_config.json so it stays
+Trading config is loaded from models/bt_config.json so it stays
 identical to whatever the backtest used.
 
 Credentials:
@@ -36,7 +36,7 @@ Run (--cash is REQUIRED; copy the liquid cash figure from the course website):
    $env:TWSE_PASSWORD="..."
    python src/scripts/deploy_today.py --cash 9500000
 
-Logs every intended/submitted order to src/output/run{N}/orders_YYYYMMDD.csv.
+Logs every intended/submitted order to models/run{N}/orders_YYYYMMDD.csv.
 """
 from __future__ import annotations
 
@@ -67,29 +67,17 @@ from src.evaluate.trading_rules import (
     SHARES_PER_LOT, round_buy, round_sell,
 )
 from stock_api import Buy_Stock, Sell_Stock, Get_User_Stocks
+from src.utils.progress import Tee, pbar, log
+from src.config import LOGS_DIR, MODELS_DIR
 
-OUT_BASE = PROJECT_ROOT / "src" / "output"
-LOGS_DIR = PROJECT_ROOT / "src" / "logs"
+OUT_BASE = MODELS_DIR
 LOGS_DIR.mkdir(exist_ok=True)
 HISTORY_START = "2024-01-01"   # ~2 years of bars is plenty for a 60-day window
 TOP_N_LOG = 10                 # how many top predictions to log per inference
 
 
-class _Tee:
-    """Write stdout to BOTH terminal and a log file."""
-    def __init__(self, stream, log_file):
-        self.stream = stream
-        self.log_file = log_file
-    def write(self, data):
-        self.stream.write(data)
-        self.log_file.write(data)
-    def flush(self):
-        self.stream.flush()
-        self.log_file.flush()
-
-
 def resolve_run_dir(run_override: str | None) -> Path:
-    """Pick which output/runN/ to load. CLI flag overrides CURRENT pointer."""
+    """Pick which models/runN/ to load. CLI flag overrides CURRENT pointer."""
     if run_override:
         d = OUT_BASE / run_override
     else:
@@ -153,14 +141,14 @@ def predict_for_yesterday(
     """
     today_str = datetime.now().strftime("%Y-%m-%d")
     rows = []
-    for code in universe:
+    for code in pbar(universe, desc="building features", unit="stock"):
         try:
             df = fetch_range(code, HISTORY_START, today_str)
         except Exception as e:
-            print(f"[skip] {code}: fetch failed: {e!r}")
+            log(f"[skip] {code}: fetch failed: {e!r}")
             continue
         if len(df) < SEQ_LEN + 1:
-            print(f"[skip] {code}: only {len(df)} bars (need >= {SEQ_LEN + 1})")
+            log(f"[skip] {code}: only {len(df)} bars (need >= {SEQ_LEN + 1})")
             continue
         feat = compute_alpha360(df, pred_h=1, mode=feature_mode).tail(1)  # pred horizon irrelevant here
         if feat.empty:
@@ -254,41 +242,6 @@ def parse_holdings(raw) -> dict[str, int]:
         return holdings
 
     return holdings
-
-
-def parse_holdings_detail(raw) -> dict[str, dict]:
-    """Like parse_holdings but keeps per-position cost basis info.
-
-    Returns {code: {shares, lots, beginning_price, stock_name}} where shares
-    is in actual share count (lots * SHARES_PER_LOT), beginning_price is the
-    per-share entry price the broker reports.
-    """
-    detail: dict[str, dict] = {}
-    if not isinstance(raw, list):
-        return detail
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        code = str(item.get("stock_code_id") or item.get("stock_code")
-                   or item.get("code") or "").strip()
-        try:
-            lots = int(item.get("shares") or item.get("quantity")
-                       or item.get("stock_shares") or 0)
-        except (TypeError, ValueError):
-            continue
-        if not code or lots <= 0:
-            continue
-        try:
-            beg_px = float(item.get("beginning_price") or item.get("avg_price") or 0)
-        except (TypeError, ValueError):
-            beg_px = 0.0
-        detail[code] = {
-            "shares": lots * SHARES_PER_LOT,
-            "lots": lots,
-            "beginning_price": beg_px,
-            "stock_name": str(item.get("stock_name") or ""),
-        }
-    return detail
 
 
 def fetch_today_intraday(codes: list[str]) -> dict[str, tuple[float, float]]:
@@ -533,7 +486,7 @@ def main() -> None:
                          "website shows this; pass it here. Slot per buy = "
                          "cash * risk_degree / len(buys).")
     ap.add_argument("--run", default=None,
-                    help="which output/runN/ to load (default: read output/CURRENT)")
+                    help="which models/runN/ to load (default: read models/CURRENT)")
     ap.add_argument("--cheat", action="store_true",
                     help="BREAKS THE CAUSAL CONTRACT. Pull today's intraday "
                          "OHLC via yfinance (~15 min delayed) and place orders "
@@ -552,8 +505,8 @@ def main() -> None:
     deploy_log_file = open(deploy_log_path, "a", encoding="utf-8", buffering=1)
     deploy_log_file.write(f"\n===== {datetime.now().isoformat(timespec='seconds')} "
                           f"dry_run={args.dry_run} =====\n")
-    sys.stdout = _Tee(sys.__stdout__, deploy_log_file)
-    sys.stderr = _Tee(sys.__stderr__, deploy_log_file)
+    sys.stdout = Tee(sys.__stdout__, deploy_log_file)
+    sys.stderr = Tee(sys.__stderr__, deploy_log_file)
 
     t0 = time.monotonic()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

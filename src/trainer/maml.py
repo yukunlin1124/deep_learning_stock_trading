@@ -26,6 +26,7 @@ from src.data.handler import PanelTensors
 from src.data.processor import csrank_normalize_per_date
 from src.model.double_adapt import DoubleAdapt
 from src.evaluate.metrics import cross_sectional_ic
+from src.utils.progress import pbar, log
 
 
 # ----------------- task sampling -----------------
@@ -74,6 +75,7 @@ def panel_to_task(panel: PanelTensors, train_start_idx: int, r: int,
 def sample_pretrain_tasks(
     panel: PanelTensors, r: int, n_tasks: int | None,
     rng: np.random.Generator, device: torch.device,
+    desc: str = "sampling tasks",
 ) -> list[Task]:
     """If n_tasks is None, sweep ALL valid task starts deterministically."""
     udates = _unique_sorted_dates(panel)
@@ -85,7 +87,7 @@ def sample_pretrain_tasks(
     else:
         starts = rng.integers(0, max_start, size=n_tasks)
     tasks: list[Task] = []
-    for s in starts:
+    for s in pbar(starts, desc=desc, unit="task", leave=False):
         t = panel_to_task(panel, int(s), r, device)
         if t is not None:
             tasks.append(t)
@@ -169,7 +171,7 @@ def pretrain_offline(
     fcfg: FOMAMLConfig,
     pcfg: PretrainConfig,
     device: torch.device,
-    log_fn=print,
+    log_fn=log,
 ) -> dict:
     """Offline meta-train on train_panel; early-stop on val IC."""
     rng = np.random.default_rng(pcfg.seed)
@@ -183,16 +185,22 @@ def pretrain_offline(
     history = []
     best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
-    for epoch in range(pcfg.epochs):
+    epoch_bar = pbar(range(pcfg.epochs), desc="pretrain", unit="epoch")
+    for epoch in epoch_bar:
         model.train()
         train_tasks = sample_pretrain_tasks(train_panel, fcfg.r,
-                                            pcfg.tasks_per_epoch, rng, device)
+                                            pcfg.tasks_per_epoch, rng, device,
+                                            desc="sampling train tasks")
         train_losses = []
         optim_phi.zero_grad(); optim_psi.zero_grad()
         ti = -1
-        for ti, task in enumerate(train_tasks):
+        task_bar = pbar(train_tasks, desc=f"epoch {epoch} train",
+                        unit="task", leave=False)
+        for ti, task in enumerate(task_bar):
             loss, _, _ = fomaml_step(model, task, fcfg, train=True)
             train_losses.append(loss)
+            if (ti + 1) % 50 == 0:
+                task_bar.set_postfix(loss=f"{np.mean(train_losses[-50:]):.5f}")
             if (ti + 1) % pcfg.batch_size == 0:
                 optim_phi.step(); optim_psi.step()
                 optim_phi.zero_grad(); optim_psi.zero_grad()
@@ -202,9 +210,11 @@ def pretrain_offline(
 
         # validation: still do inner step, just don't backprop outer.
         val_tasks = sample_pretrain_tasks(val_panel, fcfg.r,
-                                          pcfg.val_n_tasks, rng, device)
+                                          pcfg.val_n_tasks, rng, device,
+                                          desc="sampling val tasks")
         all_p, all_y, all_d = [], [], []
-        for task in val_tasks:
+        for task in pbar(val_tasks, desc=f"epoch {epoch} val",
+                         unit="task", leave=False):
             model.zero_grad(set_to_none=True)
             _, pred_test, y_test = fomaml_step(model, task, fcfg, train=False)
             model.zero_grad(set_to_none=True)
@@ -233,10 +243,13 @@ def pretrain_offline(
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
             bad_epochs += 1
-            if bad_epochs >= pcfg.early_stop_patience:
-                log_fn(f"[pretrain] early stop at epoch {epoch} "
-                       f"(no IC improvement for {pcfg.early_stop_patience} epochs)")
-                break
+        epoch_bar.set_postfix(loss=f"{train_loss:.5f}", val_ic=f"{ic:.4f}",
+                              best=f"{best_ic:.4f}", bad=bad_epochs)
+        if bad_epochs and bad_epochs >= pcfg.early_stop_patience:
+            log_fn(f"[pretrain] early stop at epoch {epoch} "
+                   f"(no IC improvement for {pcfg.early_stop_patience} epochs)")
+            break
+    epoch_bar.close()
 
     model.load_state_dict(best_state)
     return {"history": history, "best_val_ic": best_ic}

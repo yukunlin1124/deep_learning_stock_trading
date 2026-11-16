@@ -1,7 +1,8 @@
 """Import TEJ half-year CSVs into our per-(stock, year) cache format.
 
-Source: src/data/stock_data_all/{YEAR}_H{1,2}.csv (cp950-encoded Big5).
-Output: src/_cache/{code}_{year}.csv (UTF-8, our standard schema).
+Source: data/raw/TEJ/{train,val,test}/{YEAR}_H{1,2}.csv (cp950-encoded Big5).
+        Split layout is described in data/raw/TEJ/data.yaml.
+Output: data/interim/{code}_{year}.csv (UTF-8, our standard schema).
 
 Filters to the TW50 historical union (~87 codes) so we only materialize
 what training needs.
@@ -26,8 +27,8 @@ levels aren't comparable to TWSE-raw. Alpha360's lag-0 normalization
 the model sees the same relative shape regardless of adjustment factor.
 
 Usage:
-    .venv/Scripts/python.exe src/scripts/import_tej.py
-    .venv/Scripts/python.exe src/scripts/import_tej.py --since-year 2016
+    python src/scripts/import_tej.py
+    python src/scripts/import_tej.py --since-year 2016
 """
 from __future__ import annotations
 
@@ -40,9 +41,19 @@ import pandas as pd
 from src.data.io import CACHE_DIR
 from src.data.universe import get_index_universe_codes
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TEJ_DIR = PROJECT_ROOT / "src" / "data" / "stock_data_all"
-CACHE_DIR.mkdir(exist_ok=True)
+from src.config import TEJ_DIR
+# Half-year price files are split by period; see data/raw/TEJ/data.yaml.
+TEJ_SPLITS = ("train", "val", "test")
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _tej_path(year: int, half: str) -> Path | None:
+    """Locate {year}_{half}.csv in whichever split folder holds it."""
+    for split in TEJ_SPLITS:
+        path = TEJ_DIR / split / f"{year}_{half}.csv"
+        if path.exists():
+            return path
+    return None
 
 
 def _to_float(s):
@@ -55,8 +66,8 @@ def import_year(year: int, universe: set[str]) -> dict[str, int]:
     """Read H1 + H2 files for the year, return {code: n_rows_written}."""
     parts = []
     for half in ("H1", "H2"):
-        path = TEJ_DIR / f"{year}_{half}.csv"
-        if not path.exists():
+        path = _tej_path(year, half)
+        if path is None:
             continue
         df = pd.read_csv(path, encoding="cp950", dtype=str)
         # Column indices are stable; alias them to readable names
@@ -123,7 +134,7 @@ def main() -> None:
     total_files_written = 0
     coverage = {code: 0 for code in universe}
     for year in range(args.since_year, args.until_year + 1):
-        if not any((TEJ_DIR / f"{year}_{h}.csv").exists() for h in ("H1", "H2")):
+        if not any(_tej_path(year, h) for h in ("H1", "H2")):
             print(f"  {year}: no files, skip")
             continue
         written = import_year(year, universe)

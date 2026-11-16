@@ -55,15 +55,16 @@ from src.evaluate.backtest_qlib import (
     run_qlib_backtest_with_il,
 )
 from src.workflow.forecast import forecast_latest
+from src.utils.progress import Tee, pbar, log
+from src.config import LOGS_DIR, MODELS_DIR
 
-OUT_BASE = PROJECT_ROOT / "src" / "output"
+OUT_BASE = MODELS_DIR
 OUT_BASE.mkdir(exist_ok=True)
-LOGS_DIR = PROJECT_ROOT / "src" / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
 
 def _next_run_dir(base: Path) -> Path:
-    """Find next available output/runN/. Auto-increments across re-runs.
+    """Find next available models/runN/. Auto-increments across re-runs.
 
     Skips empty `runN/` directories so test-imports / killed runs don't
     create permanent gaps in the numbering.
@@ -78,19 +79,6 @@ def _next_run_dir(base: Path) -> Path:
     return base / f"run{next_n}"
 
 
-class _Tee:
-    """Write stdout to BOTH terminal and a log file."""
-    def __init__(self, stream, log_file):
-        self.stream = stream
-        self.log_file = log_file
-    def write(self, data):
-        self.stream.write(data)
-        self.log_file.write(data)
-    def flush(self):
-        self.stream.flush()
-        self.log_file.flush()
-
-
 def _init_run_output(base: Path) -> Path:
     """Allocate the next run dir, point CURRENT at it, tee stdout to its log.
 
@@ -103,8 +91,8 @@ def _init_run_output(base: Path) -> Path:
     import time as _time
     log_path = LOGS_DIR / f"train_{out_dir.name}_{_time.strftime('%Y%m%d_%H%M%S')}.log"
     log_file = open(log_path, "w", encoding="utf-8", buffering=1)
-    sys.stdout = _Tee(sys.__stdout__, log_file)
-    sys.stderr = _Tee(sys.__stderr__, log_file)
+    sys.stdout = Tee(sys.__stdout__, log_file)
+    sys.stderr = Tee(sys.__stderr__, log_file)
     print(f"logging full training session to {log_path}")
     return out_dir
 
@@ -140,14 +128,14 @@ def load_bars(universe: str) -> dict[str, pd.DataFrame]:
     bars: dict[str, pd.DataFrame] = {}
     codes = get_index_universe_codes(universe)
     print(f"loading bars for {universe} universe ({len(codes)} codes)...")
-    for code in codes:
+    for code in pbar(codes, desc="loading bars", unit="stock"):
         try:
             df = fetch_range(code, HISTORY_START, HISTORY_END)
         except Exception as e:
-            print(f"[skip] {code}: {e!r}")
+            log(f"[skip] {code}: {e!r}")
             continue
         if df.empty or len(df) < SEQ_LEN + PRED_HORIZON + 1:
-            print(f"[skip-thin] {code}: only {len(df)} rows")
+            log(f"[skip-thin] {code}: only {len(df)} rows")
             continue
         bars[code] = df
     print(f"loaded {len(bars)} candidate stocks (pool)")
@@ -253,7 +241,7 @@ def main() -> None:
 
     # Run-3 tuning:
     #   - lr_psi 1e-3 (carried over from run 2): slower DA drift
-    #   - tasks_per_epoch 200 -> 1000 (= r * TOP_N = 20 * 50): one task's worth
+    #   - tasks_per_epoch 200 -> 1000 (= r * universe size = 20 * 50): one task's worth
     #     of cross-sectional samples per epoch -> more diverse meta-batches
     #   - epochs 5 -> 30, patience 2 -> 8: more room for the meta-learner to
     #     plateau (paper-style patience instead of run-2's aggressive cut)
@@ -279,7 +267,8 @@ def main() -> None:
     print(f"\n=== IL warmup ({VALIDATION_START} → {ONLINE_TRAINING_START}) — "
           f"final preparation on meta_valid_set ===")
     warmup_cfg = ILConfig(start_date=VALIDATION_START, end_date=ONLINE_TRAINING_START)
-    warmup_log, warmup_preds = run_incremental(model, il_panel, fcfg, warmup_cfg, device)
+    warmup_log, warmup_preds = run_incremental(model, il_panel, fcfg, warmup_cfg, device,
+                                               desc="IL warmup")
     torch.save(model.state_dict(), OUT_DIR / "final_prep.pt")
     warmup_log.to_csv(OUT_DIR / "warmup_log.csv", index=False)
     print(f"saved final_prep.pt; warmup did {len(warmup_log)} IL steps")

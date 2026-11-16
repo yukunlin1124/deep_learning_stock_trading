@@ -1,6 +1,6 @@
 # Selecting `top_k` and `n_drop`
 
-These two `BTConfig` fields ([src/evaluate/backtest.py](../src/evaluate/backtest.py))
+These two `QlibBTConfig` fields ([src/evaluate/backtest_qlib.py](../src/evaluate/backtest_qlib.py))
 drive the entire trading policy. Picking them is more important than any
 model hyperparameter — get them wrong and the model's alpha is either
 diluted away (too high `top_k`) or eaten by costs (too high `n_drop`).
@@ -35,7 +35,7 @@ expression). Bigger `n_drop` → faster reaction to new signals but more cost dr
 
 ## qlib's convention
 
-Across **every** benchmark workflow in `qlib/examples/benchmarks/` — covering
+Across **every** benchmark workflow in `thirdparty/qlib/examples/benchmarks/` — covering
 GRU, LSTM, ALSTM, GATs, LightGBM, XGBoost, CatBoost, MLP, Linear, ADD, ADARNN,
 DoubleEnsemble, HIST, IGMTF, KRNN, KEnhance, KEMLP, Sandwich — the strategy
 config is:
@@ -70,7 +70,7 @@ pre-filter**:
         │
         ├── Stage 1: trailing 180d $vol ranking, semi-annual rebalance
         ▼
-   Active 50-stock universe (TOP_N = 50)
+   Active 50-stock universe (TW50)
         │
         ├── Stage 2: model predicts next-day close-to-close return per stock
         │             top_k by pred above 70 bps threshold
@@ -142,7 +142,7 @@ granularity (1000 shares) becomes coarse relative to slot size.
 
 ## Concrete recommendations for this project
 
-Active universe = **50 stocks** ([data/universe.py:24](../src/data/universe.py#L24)).
+Active universe = **50 stocks** (the TW50 index, `train.py --universe TW50`).
 
 | Use case | `top_k` | `n_drop` | Rationale |
 |---|---|---|---|
@@ -154,20 +154,23 @@ Active universe = **50 stocks** ([data/universe.py:24](../src/data/universe.py#L
 | **Diversified, low alpha** | 25 | 3 | 12% daily turnover but only 50% selectivity |
 | **Anti-pattern: don't do this** | 50 | 5 | top_k = universe → degenerate "long the index" |
 
-The **default `BTConfig(top_k=10, n_drop=None)`** in
-[src/evaluate/backtest.py:41-47](../src/evaluate/backtest.py#L41-L47)
-is a reasonable starting point: 20% selectivity (between CSI300 and
-CSI500), no turnover cap so the model fully expresses its rebalance
-intent. Switch to `n_drop=1` if you want to control daily costs.
+`train.py` uses **`BTConfig(top_k=10, n_drop=1)`**
+([src/scripts/train.py:277](../src/scripts/train.py#L277)): 20%
+selectivity (between CSI300 and CSI500) with one rotation per day to cap
+cost drag. (`QlibBTConfig`'s own defaults in
+[src/evaluate/backtest_qlib.py:41-52](../src/evaluate/backtest_qlib.py#L41-L52)
+are qlib's `top_k=50, n_drop=5`, which would be the anti-pattern above on
+a 50-stock universe.)
 
 ## How to change
 
-Edit the `bt_cfg = BTConfig()` line in
-[src/scripts/train.py:170](../src/scripts/train.py#L170):
+Edit the `bt_cfg = BTConfig(...)` line in
+[src/scripts/train.py:277](../src/scripts/train.py#L277):
 
 ```python
-# Default
-bt_cfg = BTConfig()
+# What train.py uses today
+bt_cfg = BTConfig(top_k=10, n_drop=1, cost_alpha_bps=70.0,
+                  costs="twse", deal_price="close")
 
 # Conservative, qlib-CSI300-like selectivity, capped turnover
 bt_cfg = BTConfig(top_k=8, n_drop=1)
@@ -180,8 +183,8 @@ bt_cfg = BTConfig(top_k=10, n_drop=3)
 
 Re-tune `top_k` / `n_drop` when:
 
-1. **Universe size changes** — if `TOP_N` in `data/universe.py` changes from
-   50, recompute the selectivity ratio
+1. **Universe size changes** — if the active universe changes from
+   50 stocks (e.g. `--universe TM100`), recompute the selectivity ratio
 2. **Model quality improves** — stronger alpha justifies tighter `top_k`
    (more selective) and higher `n_drop` (faster rotation)
 3. **Cost regime changes** — if you start paying lower commissions or
@@ -191,8 +194,8 @@ Re-tune `top_k` / `n_drop` when:
 
 ## References
 
-- [src/evaluate/backtest.py](../src/evaluate/backtest.py) — `BTConfig`, `run_backtest_from_predictions`
+- [src/evaluate/backtest_qlib.py](../src/evaluate/backtest_qlib.py) — `QlibBTConfig`, `run_qlib_backtest_with_il`, `run_qlib_backtest_from_predictions`
 - [src/evaluate/trading_rules.py](../src/evaluate/trading_rules.py) — commission, tax, lot, tick rules
-- [stock_project_for_class/rules.md](../stock_project_for_class/rules.md) — TWSE trading-rules source of truth
-- qlib reference: [qlib/contrib/strategy/signal_strategy.py:75-128](../qlib/qlib/contrib/strategy/signal_strategy.py#L75-L128) — `TopkDropoutStrategy` class
-- qlib YAML conventions: any file under [qlib/examples/benchmarks/*/workflow_config_*.yaml](../qlib/examples/benchmarks/)
+- [thirdparty/stock_project_for_class/rules.md](../thirdparty/stock_project_for_class/rules.md) — TWSE trading-rules source of truth
+- qlib reference: [thirdparty/qlib/qlib/contrib/strategy/signal_strategy.py:75-128](../thirdparty/qlib/qlib/contrib/strategy/signal_strategy.py#L75-L128) — `TopkDropoutStrategy` class
+- qlib YAML conventions: any file under [thirdparty/qlib/examples/benchmarks/*/workflow_config_*.yaml](../thirdparty/qlib/examples/benchmarks/)

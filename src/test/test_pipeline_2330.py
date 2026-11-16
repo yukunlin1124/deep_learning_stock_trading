@@ -25,10 +25,10 @@ So THIS TEST VERIFIES PLUMBING, NOT MODEL QUALITY. It catches:
 For a real signal-quality test, run the full pipeline on the 50-stock
 universe via `python src/scripts/train.py`.
 
-Outputs are written to src/test/output/ so they don't clobber src/output/.
+Outputs are written to models/test_2330/ so they don't clobber models/.
 
 Run:
-    .venv/Scripts/python.exe src/test/test_pipeline_2330.py
+    python src/test/test_pipeline_2330.py
 """
 from __future__ import annotations
 
@@ -43,6 +43,7 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 from src.data.io import fetch_range, CACHE_DIR
+from src.config import MODELS_DIR
 from src.data.handler import (
     build_panel, PanelTensors, SEQ_LEN, N_FIELDS, PRED_HORIZON,
 )
@@ -62,7 +63,7 @@ from src.evaluate.backtest_qlib import (
 from src.workflow.forecast import forecast_latest
 
 TEST_STOCK = "2330"
-OUT_DIR = PROJECT_ROOT / "src" / "test" / "output"
+OUT_DIR = MODELS_DIR / "test_2330"
 OUT_DIR.mkdir(exist_ok=True)
 
 # Fixed date splits — match src/scripts/train.py exactly.
@@ -95,7 +96,7 @@ def require_full_cache(code: str) -> None:
         print(f"\n*** SKIP: {code} cache is incomplete ***")
         print(f"have: {sorted(have)}")
         print(f"missing: {missing}")
-        print("Drop fresh TEJ CSVs into src/data/stock_data_all/ and run "
+        print("Drop fresh TEJ CSVs into data/raw/TEJ/test/ and run "
               f"src/scripts/import_tej.py to populate {code}'s cache, "
               "then rerun this test.")
         raise SystemExit(0)

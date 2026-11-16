@@ -30,7 +30,7 @@ Three checkpoints get written per `train.py` run:
 | `final_prep.pt` | end of Stage 2' (warmup complete) | "After final preparation" — the starting point for the live-IL backtest in Stage 3 |
 | `final.pt` | end of Stage 3 (live-IL backtest done) | What `deploy_today.py` loads tomorrow; reflects all online IL adaptation |
 
-Edit the five constants at [src/scripts/train.py:119-134](src/scripts/train.py#L119-L134)
+Edit the five constants at [src/scripts/train.py:119-124](src/scripts/train.py#L119-L124)
 to shift any window — nothing downstream is hardcoded to those dates.
 
 ## What it does
@@ -55,8 +55,8 @@ to shift any window — nothing downstream is hardcoded to those dates.
    virtual TWSE system.
 
 Architecture and processor stack mirror the qlib reference implementation
-(`qlib/qlib/contrib/meta/incremental/net.py` and
-`qlib/examples/benchmarks/GRU/workflow_config_gru_Alpha360.yaml`).
+(`thirdparty/qlib/qlib/contrib/meta/incremental/net.py` and
+`thirdparty/qlib/examples/benchmarks/GRU/workflow_config_gru_Alpha360.yaml`).
 Hyperparameters follow the DoubleAdapt paper.
 
 ## Project layout
@@ -64,16 +64,17 @@ Hyperparameters follow the DoubleAdapt paper.
 ```
 deep_learning_stock_trading/
 ├── src/                       # the pipeline (data, model, trainer, evaluate, scripts)
-├── qlib/                      # qlib clone — reference only, never imported
-├── stock_project_for_class/   # TWSE trading API + course's BacktestSystem
+├── thirdparty/                # external code (gitignored)
+│   ├── qlib/                  # qlib clone — reference only, never imported
+│   └── stock_project_for_class/  # TWSE trading API + course's BacktestSystem
 ├── docs/                      # architecture + result + structure docs
-└── .venv/                     # Python venv (gitignored)
+└── environment.yml            # conda env spec (`conda activate dlst`)
 ```
 
 Docs:
 - [docs/overview.md](docs/overview.md) — training-procedure diagram (three-stage schedule + DoubleAdapt architecture + rolling task window + per-task FOMAML)
 - [docs/project_structure.md](docs/project_structure.md) — file-by-file walkthrough
-- [docs/model_env.md](docs/model_env.md) — per-run training log (runs 1-8, what changed in the env each iteration)
+- [docs/model_env.md](docs/model_env.md) — per-run training log (runs 1-17: what changed each iteration and why)
 - [docs/model_performance.md](docs/model_performance.md) — qlib-style metrics (IC, ICIR, IR, excess return) vs 0050 benchmark
 - [docs/qlib_backtest.md](docs/qlib_backtest.md) — in-process qlib backtest engine
 - [docs/course_backtest.md](docs/course_backtest.md) — course-framework backtest + leaderboard upload
@@ -87,7 +88,7 @@ Docs:
 # cache files (2016-2026) for 2330. Verifies the full workflow (data ->
 # panel -> pretrain -> IL -> backtest -> live forecast) wires together
 # correctly using the same fixed splits as the main pipeline.
-.venv/Scripts/python.exe src/test/test_pipeline_2330.py
+python src/test/test_pipeline_2330.py
 ```
 
 Single-stock test is **plumbing-only** — it cannot validate model quality
@@ -96,57 +97,64 @@ for details).
 
 ## Prerequisites — external clones
 
-Two repos must live as **siblings under the project root** (gitignored here):
+Two repos must live under **`thirdparty/`** in the project root (gitignored here):
 
 | Path | Source | Purpose |
 |---|---|---|
-| `stock_project_for_class/` | `git clone https://ciot.imis.ncku.edu.tw:25388/Amy/stock_project_for_class.git` | Course's TWSE trading API (`Buy_Stock`, `Sell_Stock`, `Get_User_Stocks`) + the `BacktestSystem` framework |
-| `qlib/` | `git clone https://github.com/SJTU-DMTai/DoubleAdapt.git qlib` (or any qlib fork) | qlib reference clone — used by the docs for architecture cross-checks; **never imported at runtime** |
+| `thirdparty/stock_project_for_class/` | `git clone https://ciot.imis.ncku.edu.tw:25388/Amy/stock_project_for_class.git thirdparty/stock_project_for_class` | Course's TWSE trading API (`Buy_Stock`, `Sell_Stock`, `Get_User_Stocks`) + the `BacktestSystem` framework |
+| `thirdparty/qlib/` | `git clone https://github.com/SJTU-DMTai/DoubleAdapt.git thirdparty/qlib` (or any qlib fork) | qlib reference clone — used by the docs for architecture cross-checks; **never imported at runtime** |
 
-Without `stock_project_for_class/` the deploy script can't submit orders or
-upload to the leaderboard. `qlib/` is optional but referenced in `docs/`.
+Without `thirdparty/stock_project_for_class/` the deploy script can't submit orders or
+upload to the leaderboard. `thirdparty/qlib/` is optional but referenced in `docs/`.
 
 ## Data source — TEJ
 
 Bars and TW50/TM100 constituent history are sourced from **TEJ** (Taiwan
-Economic Journal) exports placed under `src/data/stock_data_all/`:
+Economic Journal) exports placed under `data/raw/TEJ/`:
 
 | File | What |
 |---|---|
-| `{YEAR}_H{1,2}.csv` | Half-year price+volume CSVs (cp950-encoded; 22 files covering 2016-2026 → split-adjusted OHLC, capacity, turnover) |
+| `data.yaml` | Describes the split layout, file schema and row counts |
+| `{train,val,test}/{YEAR}_H{1,2}.csv` | Half-year price+volume CSVs (cp950-encoded; 31 files, 2011-2026 → split-adjusted OHLC, capacity, turnover). `train/` = 2011–2021 (pretrain uses 2016–2021), `val/` = 2022–2023, `test/` = 2024 onward |
 | `TW50.csv` | 184 monthly snapshots of FTSE TWSE Taiwan 50 constituents (2011-2026, 99 unique codes) |
 | `TM100.csv` | 184 monthly snapshots of FTSE TWSE Mid-Cap 100 constituents (2011-2026, 266 unique codes) |
 
 The importer ([src/scripts/import_tej.py](src/scripts/import_tej.py))
-reads these and writes per-(stock, year) cache files to `src/_cache/`.
+reads these and writes per-(stock, year) cache files to `data/interim/`.
 No network access during training — everything reads from local disk.
+
+The repo follows the [cookiecutter-data-science](https://cookiecutter-data-science.drivendata.org/)
+layout: `data/raw/` (immutable inputs), `data/interim/` (rebuildable cache),
+`data/processed/` and `data/external/` (unused for now), `models/` (training
+runs) and `logs/`. All paths are defined in [src/config.py](src/config.py).
 
 ## Quickstart
 
 ```powershell
-# 1. Create venv and install deps. requirements.txt pulls CUDA-12.8 PyTorch
-#    from NVIDIA's wheel index by default; edit --extra-index-url for CPU.
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install --upgrade pip
-.venv/Scripts/python.exe -m pip install -r requirements.txt
+# 1. Create the conda env (env name: dlst). environment.yml pulls CUDA-12.8
+#    PyTorch from the PyTorch wheel index and installs this repo + the course
+#    package (thirdparty/stock_project_for_class) as editable. Edit the torch
+#    line in environment.yml for CPU-only machines.
+conda env create -f environment.yml
+conda activate dlst
 
-# 2. Install the course package as editable.
-.venv/Scripts/python.exe -m pip install -e ./stock_project_for_class
+# 2. (After editing environment.yml later) sync the env:
+#    conda env update -f environment.yml --prune
 
-# 3. Populate src/_cache/ from the TEJ CSVs (~30 seconds, no network).
+# 3. Populate data/interim/ from the TEJ CSVs (~30 seconds, no network).
 #    --universe TW50 (default) ≈ 99 codes; TM100 ≈ 266 codes; BOTH ≈ 300.
-.venv/Scripts/python.exe src/scripts/import_tej.py
+python src/scripts/import_tej.py
 
 # 4. Pretrain + warmup IL + online IL + backtest + live forecast.
-#    Artifacts -> src/output/run{N}/, CURRENT pointer updates automatically.
-.venv/Scripts/python.exe src/scripts/train.py                  # uses TW50
-.venv/Scripts/python.exe src/scripts/train.py --universe TM100 # broader universe
+#    Artifacts -> models/run{N}/, CURRENT pointer updates automatically.
+python src/scripts/train.py                  # uses TW50
+python src/scripts/train.py --universe TM100 # broader universe
 
 # 5. (Daily after train.py) auto-trade on the course virtual TWSE.
 #    Schedule at 12:00 (1hr before the 13:00 order window closes).
 #    --cash is REQUIRED (read it from the course website).
 $env:TWSE_ACCOUNT="..."; $env:TWSE_PASSWORD="..."
-.venv/Scripts/python.exe src/scripts/deploy_today.py --cash 100000000
+python src/scripts/deploy_today.py --cash 100000000
 # Add --dry-run to preview orders without submitting.
 
 # 6. Backtest cross-comparison (qlib engine):
@@ -154,7 +162,7 @@ $env:TWSE_ACCOUNT="..."; $env:TWSE_PASSWORD="..."
 #    runs every run's predictions.csv through the same engine.
 ```
 
-## Outputs (`src/output/run{N}/`)
+## Outputs (`models/run{N}/`)
 
 | File | What it is |
 |---|---|
@@ -215,7 +223,7 @@ $env:TWSE_ACCOUNT="..."; $env:TWSE_PASSWORD="..."
 - Du et al., *DoubleAdapt: A Meta-learning Approach to Incremental Learning for
   Stock Trend Forecasting*, KDD 2023
 - Yang et al., *Qlib: An AI-oriented Quantitative Investment Platform*, 2020
-  ([qlib/](qlib/) is the reference fork)
+  ([thirdparty/qlib/](thirdparty/qlib/) is the reference fork)
 - FTSE Russell, *FTSE TWSE Taiwan 50 Index Ground Rules* (the index spec
   TEJ's `TW50.csv` follows)
 - FTSE Russell, *FTSE TWSE Taiwan Mid-Cap 100 Index Ground Rules*

@@ -15,19 +15,22 @@ venv/
 env/
 ENV/
 
-# Cached data + model output artifacts + session logs (regeneratable, large)
-src/_cache/
-src/output/
-src/test/output/
-src/logs/
+# Data (cookiecutter-data-science layout; see src/config.py).
+# Raw TEJ exports (~640 MB) are supplied locally; only data/raw/TEJ/data.yaml
+# is tracked. interim/processed/external are regenerable; keep the .gitkeep.
+/data/raw/**/*.csv
+/data/interim/*
+/data/processed/*
+/data/external/*
+!/data/*/.gitkeep
 
-# Raw TEJ exports (~640 MB; user supplies these locally per docs/project_structure.md)
-src/data/stock_data_all/
+# Trained runs + session logs (regenerable, large)
+/models/
+/logs/
 
-# External reference clones — kept locally as untracked siblings of this repo.
+# External reference clones (qlib, course repo) — kept locally, untracked.
 # See README "Prerequisites" for the clone URLs.
-qlib/
-stock_project_for_class/
+thirdparty/
 
 # Local scratch / experiment outputs
 *.log
@@ -41,8 +44,6 @@ stock_project_for_class/
 .vscode/
 .idea/
 .claude/
-.agents/
-skills-lock.json
 *.swp
 *.swo
 
@@ -63,5 +64,3 @@ htmlcov/
 .env
 .env.local
 
-# Daily order logs (per-day timestamped)
-src/output/orders_*.csv

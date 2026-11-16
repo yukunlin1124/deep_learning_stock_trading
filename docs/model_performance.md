@@ -1,20 +1,20 @@
 # Model Performance — qlib-style metrics vs 0050 benchmark
 
-Apples-to-apples comparison of all 8 runs using qlib's standard prediction
+Apples-to-apples comparison of runs 1-17 using qlib's standard prediction
 + portfolio metrics. Benchmark is **0050.TW** (Yuanta Taiwan 50 ETF) over
 the same calendar window as each run's backtest.
 
 ## Why 0050?
 
 It's the natural benchmark for any TWSE long-equity strategy:
-- Tracks the FTSE TWSE 50 index, the same large-cap universe runs 1-7
-  draw from (run8 uses TM100, but 0050 remains the most-liquid passive
-  alternative).
+- Tracks the FTSE TWSE 50 index, the same large-cap universe the TW50
+  runs draw from (the TM100 / BOTH runs use a broader pool, but 0050
+  remains the most-liquid passive alternative).
 - Investable: tight spreads, low TER, no model risk.
 - Listed since 2003; full 2024-2026 history is on yfinance (TEJ doesn't
   cover ETFs).
 
-Cache file: [src/_cache/0050_benchmark.csv](../src/_cache/0050_benchmark.csv)
+Cache file: [data/interim/0050_benchmark.csv](../data/interim/0050_benchmark.csv)
 (auto-adjusted close from yfinance, 597 rows 2023-12 → 2026-05).
 
 ## Metrics computed (qlib convention)
@@ -79,6 +79,9 @@ drawdown (−14% vs run3's −33%) and risk-adjusted metrics (IC, RankIC).
 | run15 | 1d | TW50 | live-IL **lr_psi=1e-2** (paper-default 10× ratio) | +0.0404 | +0.1813 | +0.0631 | +0.3150 | −41.0% | −2.37 | −23.0% | −0.95 |
 | run16 | 1d | **BOTH** | live-IL **lr_psi=1e-2** (universe + LR both off) | +0.0208 | +0.1406 | +0.0566 | +0.3992 | −36.6% | −2.04 | −25.8% | −0.86 |
 | **run17** | 1d | TW50 | live-IL **qlib-exact Alpha360** (paper-faithful normalization) | **+0.0506** | **+0.246** | **+0.0742** | **+0.380** | −29.9% | −1.72 | −16.5% | −0.73 |
+| run18 | 1d | TW50 | **plain GRU** IL (no DA, no FOMAML) | +0.0371 | +0.1638 | +0.0478 | +0.2266 | −29.8% | −1.77 | −26.9% | −0.72 |
+| run19 | 1d | TW50 | **LightGBM static** (qlib Alpha360 config, 360 flat cols) | +0.0349 | +0.1769 | +0.0571 | +0.2860 | −45.0% | −2.41 | −24.8% | −1.06 |
+| run20 | 1d | TW50 | **LightGBM rolling** (refit every 20d, expanding window) | +0.0361 | +0.1843 | +0.0603 | +0.3035 | −45.3% | −2.42 | −24.0% | −1.05 |
 
 > **Table refreshed 2026-05-28**. Re-derived from the freshly-replayed
 > qlib equity.csv for every run (181-code unified bars covering TW50 +
@@ -98,6 +101,20 @@ passively-held 0050 ETF in this window.
 > days raises the signal-to-noise ratio). The fair lens for run9 is
 > *drawdown* and *risk-adjusted return* — see the run7 vs run9 callout
 > below.
+
+### LightGBM baseline (runs 19–20)
+
+`src/scripts/train_lgbm_baseline.py` trains qlib's tuned Alpha360 LightGBM
+config on the same panel, universe mask, splits and backtest settings as
+run9/run18 (`--mode static` or `--mode rolling`). Ranking quality is
+close to the GRUs: RankIC +0.057 to +0.060, between run18 (+0.048) and
+run9 (+0.067). Trading results are much worse: ~+4–6%/yr vs ~+20–22%/yr
+for the GRUs. Early stopping picked only 90 trees, and the gain is
+concentrated in the last 1–6 days of `close` (short-term reversal). So the
+deep models' edge is in which top-10 names they pick, not in average
+ranking skill. Note: runs 19–20 cover 14 more days (to 2026-05-21) than
+run9/run18 (to 2026-04-30); the metrics table aligns each run to 0050 on
+its own dates.
 
 ## What this table actually says
 
@@ -265,7 +282,7 @@ point — useful evidence, not a deploy candidate.
 ### run9 vs run12 — best-state restore ablation (does early-stop's "rollback to best epoch" matter?)
 
 Only difference: run12 disables `model.load_state_dict(best_state)`
-in [src/trainer/maml.py:237](../src/trainer/maml.py#L237), so warmup IL
+in [src/trainer/maml.py:254](../src/trainer/maml.py#L254), so warmup IL
 starts from the **post-early-stop weights (epoch 9, val IC ≈ 0.012)**
 instead of the **best-IC weights (epoch 1, val IC = 0.051)**. Same
 seed, same data, same LRs — the pretrain trajectory is bit-identical
@@ -309,7 +326,7 @@ run9 has 25 steps of productive adapt; run12 has burned its budget on
 recovery.
 
 **Lesson confirmed**: the `load_state_dict(best_state)` line at
-[src/trainer/maml.py:237](../src/trainer/maml.py#L237) is load-bearing
+[src/trainer/maml.py:254](../src/trainer/maml.py#L254) is load-bearing
 for downstream performance. The early-stop counter only matters
 *because* of the restore — without it, early stopping degrades to
 "stop training early at a worse checkpoint", which is strictly worse
@@ -540,17 +557,17 @@ to prevent silent feature distortion.
 
 ```powershell
 # 1) Refresh 0050 benchmark (yfinance, auto-adjusted)
-.venv/Scripts/python.exe -c @"
+python -c @"
 import yfinance as yf, pandas as pd
 df = yf.download('0050.TW', start='2023-12-01', end='2026-05-31',
                  auto_adjust=True, progress=False).dropna()
 df.columns = ['close','high','low','open','volume']
 df.reset_index().rename(columns={'Date':'date'}).to_csv(
-    'src/_cache/0050_benchmark.csv', index=False)
+    'data/interim/0050_benchmark.csv', index=False)
 "@
 
 # 2) Recompute metrics (reads each run's equity.csv + report.json)
-.venv/Scripts/python.exe src/evaluate/compute_qlib_metrics.py
+python src/evaluate/compute_qlib_metrics.py
 ```
 
 (The compute script is small — it reads `equity.csv` per run, aligns to

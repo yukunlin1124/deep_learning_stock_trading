@@ -1,11 +1,11 @@
 """Read-only cache wrapper for per-(stock, year) OHLC bars.
 
 Cache is populated by `src/scripts/import_tej.py` from TEJ's half-year CSVs
-under `src/data/stock_data_all/`. Once imported, all downstream code (panel
-build, training, backtest, deploy) reads cached CSVs from `src/_cache/` and
+under `data/raw/TEJ/`. Once imported, all downstream code (panel
+build, training, backtest, deploy) reads cached CSVs from `data/interim/` and
 never hits the network.
 
-Schema of each cache file (`src/_cache/{code}_{year}.csv`):
+Schema of each cache file (`data/interim/{code}_{year}.csv`):
     date, capacity, turnover, high, low, close, change,
     transaction_volume, stock_code_id, open
 
@@ -17,9 +17,9 @@ from __future__ import annotations
 from pathlib import Path
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CACHE_DIR = PROJECT_ROOT / "src" / "_cache"
-CACHE_DIR.mkdir(exist_ok=True)
+from src.config import CACHE_DIR
+
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _cache_path(stock_code: str, year: int) -> Path:

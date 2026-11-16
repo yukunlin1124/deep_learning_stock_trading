@@ -1,7 +1,7 @@
 """qlib-style cross-run metrics vs 0050 benchmark.
 
 Reads each run's equity.csv + report.json, aligns to the 0050 daily
-series from src/_cache/0050_benchmark.csv, and prints the table that
+series from data/interim/0050_benchmark.csv, and prints the table that
 lives in docs/model_performance.md.
 
 Formulas match qlib.contrib.evaluate.risk_analysis (additive
@@ -15,10 +15,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.config import CACHE_DIR, MODELS_DIR
+
 ROOT = Path(__file__).resolve().parents[2]
-BENCHMARK_CSV = ROOT / "src" / "_cache" / "0050_benchmark.csv"
-OUTPUT_DIR = ROOT / "src" / "output"
-RUNS = ["run1", "run2", "run3", "run4", "run5", "run6", "run7", "run8", "run9", "run10", "run11", "run12", "run13", "run14", "run15", "run16", "run17"]
+BENCHMARK_CSV = CACHE_DIR / "0050_benchmark.csv"
+OUTPUT_DIR = MODELS_DIR
+RUNS = ["run1", "run2", "run3", "run4", "run5", "run6", "run7", "run8", "run9", "run10", "run11", "run12", "run13", "run14", "run15", "run16", "run17", "run18", "run19", "run20"]
 
 
 def _load_benchmark() -> pd.DataFrame:

@@ -37,7 +37,7 @@ One `python src/scripts/train.py --universe TW50` invocation executes:
 └─────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼
-                  src/output/runN/    (deployable to deploy_today.py)
+                  models/runN/    (deployable to deploy_today.py)
 ```
 
 The split into three stages is operational, not architectural — the
@@ -49,10 +49,10 @@ with Stage 3 also running portfolio simulation.
 ## Data flow (cache → features → labels → tasks)
 
 ```
-                TEJ half-year CSVs (cp950, src/data/stock_data_all/)
+                TEJ half-year CSVs (cp950, data/raw/TEJ/)
                               │
                               ▼  src/scripts/import_tej.py
-                  per-(stock, year) cache (src/_cache/{code}_{year}.csv)
+                  per-(stock, year) cache (data/interim/{code}_{year}.csv)
                               │
                               ▼  src/data/io.py: fetch_range
                   bars dict: {code: DataFrame[date, open, high, low,
@@ -141,7 +141,7 @@ the outer step.
 
 This is what runs *once per task* during Stage 1 (offline pretrain) and
 *once per r=20-day window* during Stages 2 + 3 (warmup + live-IL). See
-[src/trainer/maml.py:103-146](../src/trainer/maml.py#L103) for the code.
+[src/trainer/maml.py:109-152](../src/trainer/maml.py#L109-L152) for the code.
 
 ```
                                         Inner / lower-level
@@ -239,10 +239,10 @@ handoff from pretrain to IL (see [model_env.md](model_env.md)).
        emits 20 sequential 1-day predictions
 ```
 
-Verified against [run9's il_log.csv](../src/output/run9/il_log.csv): for
+Verified against [run9's il_log.csv](../models/run9/il_log.csv): for
 all 28 consecutive live-IL tasks, `train_start[k+1] == test_start[k]`
 holds — chained rolling, no overlap, no gap. Same for the 25 warmup
-tasks in [run9's warmup_log.csv](../src/output/run9/warmup_log.csv).
+tasks in [run9's warmup_log.csv](../models/run9/warmup_log.csv).
 (Earlier runs use the legacy `support_*` / `query_*` column names —
 re-running training under the renamed code emits the new column names.)
 
@@ -366,7 +366,7 @@ meta_valid_set = panel.slice_by_date(VALIDATION_START, VALIDATION_END)
 ## What lands on disk per run
 
 ```
-src/output/run{N}/
+models/run{N}/
 ├── pretrained.pt          ← Stage 1 best-val-IC checkpoint
 ├── final_prep.pt          ← Stage 2 post-warmup checkpoint
 ├── final.pt               ← Stage 3 final checkpoint (used by deploy_today)
@@ -385,7 +385,7 @@ src/output/run{N}/
 └── report.json            ← Roll-up: IC/ICIR/RankIC/RankICIR + backtest summary
 ```
 
-`src/output/CURRENT` is a one-line text file pointing at the latest
+`models/CURRENT` is a one-line text file pointing at the latest
 runN/. `deploy_today.py` reads it by default; override with `--run runX`.
 
 ## Known deviations from the DoubleAdapt paper

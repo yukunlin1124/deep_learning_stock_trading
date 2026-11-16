@@ -1,7 +1,7 @@
 """qlib-style backtest: TopkDropoutStrategy + close-price execution.
 
 Mirrors qlib's default benchmark setup
-(qlib/examples/benchmarks/GRU/workflow_config_gru_Alpha360.yaml):
+(thirdparty/qlib/examples/benchmarks/GRU/workflow_config_gru_Alpha360.yaml):
 
   strategy:
       class: TopkDropoutStrategy
@@ -295,7 +295,7 @@ def run_qlib_backtest_with_il(
     start_date: str = "2024-01-01",
     end_date: str | None = None,
     device=None,
-    log_fn=print,
+    log_fn=None,
 ) -> tuple[BTResult, pd.DataFrame, pd.DataFrame]:
     """Walk il_panel forward in r-day windows. Each window:
       1. Build (train, test) task; do one FOMAML bi-level update on the train set;
@@ -316,7 +316,9 @@ def run_qlib_backtest_with_il(
     import torch
     from src.trainer.maml import panel_to_task, fomaml_step
     from src.evaluate.metrics import cross_sectional_ic
+    from src.utils.progress import pbar, log, n_walk_steps
 
+    log_fn = log_fn or log
     cfg = cfg or QlibBTConfig()
     costs = _COST_TABLES[cfg.costs]
     open_cost, close_cost, min_cost = costs["open_cost"], costs["close_cost"], costs["min_cost"]
@@ -356,9 +358,12 @@ def run_qlib_backtest_with_il(
     pred_rows = []
     i = test_first_idx
     step = 0
+    bar = pbar(total=n_walk_steps(udates, test_first_idx, fcfg.r, end),
+               desc="live-IL backtest", unit="step")
     while i + fcfg.r <= len(udates):
         if udates[i] > end:
             break
+        bar.update(1)
         task = panel_to_task(il_panel, i - fcfg.r, fcfg.r, device)
         if task is None:
             i += fcfg.r; step += 1; continue
@@ -503,8 +508,11 @@ def run_qlib_backtest_with_il(
                f"{pd.Timestamp(udates[min(i+fcfg.r-1, len(udates)-1)]).date()} "
                f"loss={test_loss:.5f} ic={ic:+.4f} ric={ric:+.4f} "
                f"equity={equity_rows[-1][1]:,.0f}" if equity_rows else "")
+        if equity_rows:
+            bar.set_postfix(ic=f"{ic:+.4f}", equity=f"{equity_rows[-1][1]:,.0f}")
         i += fcfg.r
         step += 1
+    bar.close()
 
     eq = pd.DataFrame(equity_rows, columns=["date", "equity"])
     trades_df = pd.DataFrame(trades) if trades else pd.DataFrame(columns=[

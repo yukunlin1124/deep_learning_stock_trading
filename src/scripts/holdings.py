@@ -2,12 +2,12 @@
 
 Reads credentials from env vars TWSE_ACCOUNT / TWSE_PASSWORD (or --account /
 --password CLI flags). Cross-references against the most recent
-src/output/orders_YYYYMMDD.csv to mark which of today's orders filled.
+models/orders_YYYYMMDD.csv to mark which of today's orders filled.
 
 Usage:
     $env:TWSE_ACCOUNT="..."
     $env:TWSE_PASSWORD="..."
-    .venv/Scripts/python.exe src/scripts/holdings.py
+    python src/scripts/holdings.py
 """
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ from stock_api import Get_User_Stocks
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-OUT_BASE = PROJECT_ROOT / "src" / "output"
+from src.config import MODELS_DIR
+
+OUT_BASE = MODELS_DIR
 
 
 def main() -> None:

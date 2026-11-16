@@ -1,0 +1,37 @@
+%% DoubleAdapt architecture: G (FeatureAdapter) + F (GRUBase) + H (LabelAdapter)
+%% Render: mmdc -i architecture.mmd -o architecture.png -w 1600 -H 900
+%% Or paste into mermaid.live for interactive rendering then export PNG/SVG.
+
+graph LR
+    X["輸入 X<br/>(B, 60, 6)<br/>60 日 × 6 特徵欄位<br/>close, open, high, low, vwap, volume"]
+
+    subgraph DA["DA(ψ) — 資料適配器 (Data Adapter)<br/>共 12,176 個參數"]
+        G["G — FeatureAdapter<br/>每時間步 cosine 相似度<br/>對 N=8 學習得到的原型<br/>softmax(sims/τ) → 多頭殘差變換"]
+        H["H — LabelAdapter<br/>獨立 cosine gating<br/>每頭仿射 h_i(y) = γ_i·y + β_i<br/>正向 / 反向皆可用"]
+    end
+
+    subgraph MA["MA(φ) — 模型適配器 (Model Adapter)<br/>共 38,849 個參數"]
+        F["F — GRUBase<br/>GRU(input=6, hidden=64, layers=2)<br/>→ Linear(64, 1) → scalar<br/>取最後隱藏層輸出"]
+    end
+
+    Xtilde["x̃ (調整後特徵)"]
+    PredRaw["pred_raw<br/>(在 CSRankNorm 標籤空間)"]
+    Yhat["ŷ — 最終預測<br/>(回到真實報酬尺度)"]
+
+    X --> G
+    G --> Xtilde
+    Xtilde --> F
+    F --> PredRaw
+    PredRaw --> H
+    Xtilde -.->|提供 gating 上下文| H
+    H -->|inverse=True| Yhat
+
+    classDef daClass fill:#fff4e6,stroke:#ff8800,stroke-width:2px
+    classDef maClass fill:#e6f4ff,stroke:#0066cc,stroke-width:2px
+    classDef inputClass fill:#f0f0f0,stroke:#666,stroke-width:1.5px
+    classDef outputClass fill:#e6ffe6,stroke:#00aa00,stroke-width:2px
+
+    class G,H daClass
+    class F maClass
+    class X,Xtilde,PredRaw inputClass
+    class Yhat outputClass

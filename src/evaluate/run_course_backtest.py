@@ -1,7 +1,7 @@
 """Run DoubleAdapt predictions through the course's official backtest framework.
 
 Mirrors the structure of
-[stock_project_for_class/backtest_package/stock_backtest_v1/examplebacktest.py]
+[thirdparty/stock_project_for_class/backtest_package/stock_backtest_v1/examplebacktest.py]
 but plugs in the DoubleAdapt model's per-day predictions for stock selection.
 
 Pattern (matches the example):
@@ -15,7 +15,7 @@ Pattern (matches the example):
      `save_performance_to_xls` -> optional `upload_*_to_web`.
 
 Differences from examplebacktest.py:
-  - Pre-builds the framework's stock cache from our src/_cache/ files so it
+  - Pre-builds the framework's stock cache from our data/interim/ files so it
     doesn't spend an hour downloading every TWSE code from the course API.
   - Monkey-patches Stock_API.get_all_stock_information to return only the
     codes that appear in our model's predictions.csv (~80 codes).
@@ -23,9 +23,9 @@ Differences from examplebacktest.py:
     formula (qlib's `value = cash * risk_degree / len(buys)`).
 
 Usage:
-    .venv/Scripts/python.exe src/evaluate/run_course_backtest.py
-    .venv/Scripts/python.exe src/evaluate/run_course_backtest.py --upload
-    .venv/Scripts/python.exe src/evaluate/run_course_backtest.py --run run5 --upload
+    python src/evaluate/run_course_backtest.py
+    python src/evaluate/run_course_backtest.py --upload
+    python src/evaluate/run_course_backtest.py --run run5 --upload
 """
 from __future__ import annotations
 
@@ -43,10 +43,12 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-FRAMEWORK_ROOT = PROJECT_ROOT / "stock_project_for_class" / "backtest_package" / "stock_backtest_v1"
+FRAMEWORK_ROOT = PROJECT_ROOT / "thirdparty" / "stock_project_for_class" / "backtest_package" / "stock_backtest_v1"
 sys.path.insert(0, str(FRAMEWORK_ROOT))
 
-OUT_BASE = PROJECT_ROOT / "src" / "output"
+from src.config import CACHE_DIR, MODELS_DIR
+
+OUT_BASE = MODELS_DIR
 RISK_DEGREE = 0.95                              # qlib default: 95% deployed, 5% cash reserve
 
 
@@ -85,7 +87,7 @@ def build_framework_cache(codes: List[str], start_date: str, end_date: str) -> N
     years = list(range(int(start_date[:4]) - 1, int(end_date[:4]) + 1))
     for code in codes:
         for year in years:
-            csv_path = PROJECT_ROOT / "src" / "_cache" / f"{code}_{year}.csv"
+            csv_path = CACHE_DIR / f"{code}_{year}.csv"
             if not csv_path.exists():
                 continue
             df = pd.read_csv(csv_path, usecols=["date", "open", "high", "low", "close"])
@@ -94,7 +96,7 @@ def build_framework_cache(codes: List[str], start_date: str, end_date: str) -> N
             df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y%m%d")
             parts.append(df[["stock_code", "date", "open", "high", "low", "close"]])
     if not parts:
-        raise SystemExit("no cache files found under src/_cache/")
+        raise SystemExit("no cache files found under data/interim/")
     full = pd.concat(parts, ignore_index=True)
     full = pd.concat([full, full], ignore_index=True)         # framework quirk: needs duplicates
     full = full.sort_values(["stock_code", "date"]).reset_index(drop=True)
@@ -116,7 +118,7 @@ def build_framework_cache(codes: List[str], start_date: str, end_date: str) -> N
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default=None,
-                    help="which output/runN/ to use (default: output/CURRENT)")
+                    help="which models/runN/ to use (default: models/CURRENT)")
     ap.add_argument("--start-date", default=None,
                     help="YYYYMMDD; default = earliest date in predictions.csv")
     ap.add_argument("--end-date", default=None,
@@ -180,7 +182,7 @@ def main() -> None:
             zip(grp["stock_code_id"].tolist(), grp["pred"].astype(float).tolist())
         )
 
-    print("building framework cache from src/_cache/ ...")
+    print("building framework cache from data/interim/ ...")
     build_framework_cache(codes, start_date, end_date)
 
     strategy_name = args.strategy_name or f"DoubleAdapt {run_dir.name} (full IL)"
