@@ -88,7 +88,7 @@ Docs:
 # cache files (2016-2026) for 2330. Verifies the full workflow (data ->
 # panel -> pretrain -> IL -> backtest -> live forecast) wires together
 # correctly using the same fixed splits as the main pipeline.
-python src/test/test_pipeline_2330.py
+python tests/test_pipeline_2330.py
 ```
 
 Single-stock test is **plumbing-only** — it cannot validate model quality

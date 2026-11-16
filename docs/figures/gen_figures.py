@@ -7,6 +7,7 @@ Produces 3 PNG + PDF figures in docs/figures/ ready to paste into Word:
 
 Mandarin axis labels supported on Windows via Microsoft JhengHei.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,7 +31,7 @@ OP_WINDOW_END = "2026-04-30"
 # matplotlib's findfont() can't see DFKai-SB by default on Windows (it's a
 # .ttf but lives in C:/Windows/Fonts only); addfont() registers it explicitly.
 _KAI_PATHS = [
-    Path("C:/Windows/Fonts/kaiu.ttf"),    # standard Windows 標楷體
+    Path("C:/Windows/Fonts/kaiu.ttf"),  # standard Windows 標楷體
     Path("C:/Windows/Fonts/DFKAI-SB.ttf"),
 ]
 for _p in _KAI_PATHS:
@@ -52,11 +53,11 @@ else:
 matplotlib.rcParams["axes.unicode_minus"] = False
 
 PALETTE = {
-    "run9":  "#1f77b4",
-    "run3":  "#ff7f0e",
+    "run9": "#1f77b4",
+    "run3": "#ff7f0e",
     "run17": "#2ca02c",
     "run18": "#d62728",
-    "0050":  "#7f7f7f",
+    "0050": "#7f7f7f",
 }
 
 
@@ -74,8 +75,7 @@ def load_equity(run: str) -> pd.DataFrame | None:
 
 
 def load_benchmark() -> pd.DataFrame:
-    df = pd.read_csv(PROJECT_ROOT / "data" / "interim" / "0050_benchmark.csv",
-                     parse_dates=["date"])
+    df = pd.read_csv(PROJECT_ROOT / "data" / "interim" / "0050_benchmark.csv", parse_dates=["date"])
     df = df[(df["date"] >= OP_WINDOW_START) & (df["date"] <= OP_WINDOW_END)]
     df["norm"] = df["close"] / df["close"].iloc[0] * 100.0
     return df.reset_index(drop=True)
@@ -94,8 +94,7 @@ def figure_1_equity_curves():
     fig, ax = plt.subplots(figsize=(9, 5))
 
     bm = load_benchmark()
-    ax.plot(bm["date"], bm["norm"], color=PALETTE["0050"], linewidth=1.5,
-            linestyle="--", label="0050 ETF (基準)")
+    ax.plot(bm["date"], bm["norm"], color=PALETTE["0050"], linewidth=1.5, linestyle="--", label="0050 ETF (基準)")
 
     # Fresh cum-return values from the 2026-05-28 cross-run replay
     # (model_env.md) — overrides report.json which can be stale.
@@ -106,8 +105,7 @@ def figure_1_equity_curves():
             continue
         cum_pct = FRESH_CUM.get(run, (eq["norm"].iloc[-1] - 100.0))
         label = f"{run}  (累積 {cum_pct:+.1f}%)"
-        ax.plot(eq["date"], eq["norm"], color=PALETTE.get(run, "#333"),
-                linewidth=1.8, label=label)
+        ax.plot(eq["date"], eq["norm"], color=PALETTE.get(run, "#333"), linewidth=1.8, label=label)
 
     ax.set_xlabel("日期")
     ax.set_ylabel("資產 (起始 = 100)")
@@ -136,15 +134,12 @@ def figure_2_ic_trajectory():
 
     fig, ax = plt.subplots(figsize=(9, 4.5))
     colors = ["#2ca02c" if v >= 0 else "#d62728" for v in df["ic"]]
-    ax.bar(df["test_start"], df["ic"], width=15, color=colors, alpha=0.85,
-           label="每步 IC")
+    ax.bar(df["test_start"], df["ic"], width=15, color=colors, alpha=0.85, label="每步 IC")
     rolling = df["ic"].rolling(window=3, min_periods=1, center=True).mean()
-    ax.plot(df["test_start"], rolling, color="#1f77b4", linewidth=2,
-            label="3-step 移動平均")
+    ax.plot(df["test_start"], rolling, color="#1f77b4", linewidth=2, label="3-step 移動平均")
 
     mean_ic = df["ic"].mean()
-    ax.axhline(mean_ic, color="black", linewidth=1, linestyle=":",
-               label=f"整體均值 IC = {mean_ic:+.4f}")
+    ax.axhline(mean_ic, color="black", linewidth=1, linestyle=":", label=f"整體均值 IC = {mean_ic:+.4f}")
     ax.axhline(0, color="black", linewidth=0.5, alpha=0.4)
 
     ax.set_xlabel("線上訓練測試窗口開始日")
@@ -168,31 +163,29 @@ def figure_3_ablation_bars():
     # Cross-run replay values from docs/model_env.md (2026-05-28 refresh) +
     # run17/run18 fresh report.json. cum_ret_pct, sharpe, max_dd_pct
     FRESH = {
-        "run1":  (88.5,  1.066, -38.6),
-        "run2":  (147.7, 1.373, -45.5),
-        "run3":  (205.2, 1.661, -36.4),
-        "run4":  (131.7, 1.427, -40.7),
-        "run5":  (156.8, 1.417, -43.6),
-        "run6":  (94.7,  1.520, -19.3),
-        "run7":  (79.2,  1.367, -18.1),
-        "run8":  (58.7,  0.842, -33.6),
-        "run9":  (56.9,  1.242, -14.07),
-        "run10": (46.6,  0.986, -14.01),
-        "run11": (17.8,  0.425, -39.91),
-        "run12": (42.2,  0.822, -31.66),
-        "run13": (56.9,  1.242, -14.07),
-        "run14": (26.4,  0.627, -27.71),
-        "run15": (18.9,  0.510, -23.02),
-        "run16": (30.8,  0.720, -25.80),
-        "run17": (53.4,  1.227, -16.5),
-        "run18": (50.0,  0.924, -26.87),
+        "run1": (88.5, 1.066, -38.6),
+        "run2": (147.7, 1.373, -45.5),
+        "run3": (205.2, 1.661, -36.4),
+        "run4": (131.7, 1.427, -40.7),
+        "run5": (156.8, 1.417, -43.6),
+        "run6": (94.7, 1.520, -19.3),
+        "run7": (79.2, 1.367, -18.1),
+        "run8": (58.7, 0.842, -33.6),
+        "run9": (56.9, 1.242, -14.07),
+        "run10": (46.6, 0.986, -14.01),
+        "run11": (17.8, 0.425, -39.91),
+        "run12": (42.2, 0.822, -31.66),
+        "run13": (56.9, 1.242, -14.07),
+        "run14": (26.4, 0.627, -27.71),
+        "run15": (18.9, 0.510, -23.02),
+        "run16": (30.8, 0.720, -25.80),
+        "run17": (53.4, 1.227, -16.5),
+        "run18": (50.0, 0.924, -26.87),
     }
-    rows = [{"run": r, "cum_return_pct": v[0], "sharpe": v[1], "max_dd_pct": v[2]}
-            for r, v in FRESH.items()]
+    rows = [{"run": r, "cum_return_pct": v[0], "sharpe": v[1], "max_dd_pct": v[2]} for r, v in FRESH.items()]
     df = pd.DataFrame(rows).sort_values("sharpe", ascending=True).reset_index(drop=True)
 
-    fig, axes = plt.subplots(1, 3, figsize=(13, max(4, 0.32 * len(df))),
-                             sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(13, max(4, 0.32 * len(df))), sharey=True)
     y = np.arange(len(df))
     color = ["#1f77b4" if r == "run9" else "#9ac9e3" for r in df["run"]]
 

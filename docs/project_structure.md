@@ -1,13 +1,16 @@
 # Project Structure
 
-File-by-file walkthrough. Mirrors qlib's `contrib/` split
-(`data / model / trainer / evaluate / workflow / scripts`).
+File-by-file walkthrough. Loosely mirrors qlib's `contrib/` split
+(`data / model / trainer / evaluate / scripts`), plus `trading/` for TWSE
+rules, strategy and the broker API. The short version for agents is the
+"Where things live" section of [CLAUDE.md](../CLAUDE.md).
 
 ## Top-level
 
 ```
 deep_learning_stock_trading/
-├── src/                       # the pipeline (this project, incl. test/); paths in src/config.py
+├── src/                       # the pipeline (library code + runnable scripts); constants in src/config.py
+├── tests/                     # pytest tests (`pytest -m slow` = end-to-end 2330 run)
 ├── data/                      # cookiecutter-data-science layout
 │   ├── raw/                   # immutable inputs, never edited by code
 │   │   └── TEJ/               # raw TEJ dataset, split by period (CSVs gitignored)
@@ -27,13 +30,15 @@ deep_learning_stock_trading/
 │   └── stock_project_for_class/  # TWSE data API + course backtest framework
 ├── docs/                      # architecture + result + structure docs
 ├── environment.yml            # conda env spec (env name: dlst)
+├── CLAUDE.md                  # where things live (for agents)
 ├── README.md
 └── .gitignore
 ```
 
 | Path | Purpose |
 |---|---|
-| `src/` | All code that runs (data, model, trainer, evaluation, workflow, scripts) |
+| `src/` | All code that runs (data, model, trainer, trading, evaluation, scripts) |
+| `tests/` | pytest tests. `test_pipeline_2330.py` is marked `slow` (it trains a model). |
 | `data/interim/` | Rebuildable bar cache written by `import_tej.py`, read through `src/data/io.py`. Safe to delete. |
 | `models/` | One `run{N}/` folder per training run (see [`models/`](#models--training-artifacts) below), the `CURRENT` pointer, and `test_2330/` from the smoke test. |
 | `logs/` | Session logs (see [`logs/`](#logs--session-logs-gitignored) below). |
@@ -47,48 +52,62 @@ deep_learning_stock_trading/
 ```
 src/
 ├── __init__.py
-├── config.py                  # all project paths (data/, models/, logs/)
+├── config.py                  # shared constants: paths, date windows, DEFAULT_BT (imports nothing from src/)
+├── runs.py                    # models/run{N}/ contract: allocate, CURRENT, session logs, artifact save/load
+├── inference.py               # forecast_latest (panel) + predict_for_yesterday (live bars)
 ├── data/
-│   ├── io.py                  # read-only OHLC cache wrapper (cache populated by import_tej.py)
+│   ├── io.py                  # read-only OHLC cache wrapper + load_bars(universe)
 │   ├── handler.py             # Alpha360 feature builder + PanelTensors
-│   ├── processor.py           # RobustZScoreNorm + Fillna + CSRankNorm
-│   └── universe.py            # TEJ index loader: TW50 + TM100 monthly snapshots
+│   ├── processor.py           # RobustZScoreNorm + Fillna + CSRankNorm (pickled by path: do not move)
+│   └── universe.py            # TEJ index loader (TW50 / TM100) + apply_time_varying_universe
 ├── model/
 │   ├── gru.py                 # GRUBase (qlib pytorch_gru defaults)
 │   └── double_adapt.py        # FeatureAdapter + LabelAdapter + DoubleAdapt wrapper
 ├── trainer/
 │   ├── maml.py                # FOMAML pretrain loop, Task, sample/eval helpers
-│   └── incremental.py         # fake-online IL loop (walks 2022 → panel max)
+│   └── incremental.py         # IL walk (run_incremental) + live-IL backtest (run_qlib_backtest_with_il)
+├── trading/
+│   ├── rules.py               # TWSE tick rounding, lot size, COST_TABLES, is_limit_locked
+│   ├── strategy.py            # topk_dropout selection + buy_slot sizing (one copy for backtest + live)
+│   └── broker.py              # course stock_api: holdings, order submission, intraday quote
 ├── evaluate/
 │   ├── metrics.py             # cross_sectional_ic (Pearson IC + Spearman RankIC)
-│   ├── trading_rules.py       # TWSE tick rounding + lot size
-│   ├── backtest_qlib.py       # qlib-style in-process backtest (TopkDropoutStrategy)
-│   ├── run_course_backtest.py # bridge model preds → course's BacktestSystem
-│   └── compute_qlib_metrics.py # IC / IR / excess-return table vs 0050 for every run
-├── workflow/
-│   └── forecast.py            # live forecast on label-less newest dates
-├── scripts/
+│   └── backtest_qlib.py       # PortfolioSim + replay backtest (run_qlib_backtest_from_predictions)
+├── scripts/                   # everything you run; scripts never import each other
 │   ├── import_tej.py          # populate data/interim/ from TEJ half-year CSVs
 │   ├── train.py               # main entry point (pretrain → IL → backtest → forecast)
 │   ├── train_il_baseline.py   # ablation: plain GRU + vanilla fine-tune IL (no DoubleAdapt), run18
+│   ├── train_lgbm_baseline.py # ablation: LightGBM on flattened Alpha360 (does not move CURRENT)
 │   ├── extend_il.py           # append the next IL step(s) to an existing run as new data arrives
+│   ├── run_course_backtest.py # bridge model preds → course's BacktestSystem
+│   ├── compute_qlib_metrics.py # IC / IR / excess-return table vs 0050 for every run
 │   ├── deploy_today.py        # daily inference + order submission
-│   └── holdings.py            # query current holdings via Get_User_Stocks
-├── test/
-│   ├── __init__.py
-│   └── test_pipeline_2330.py  # end-to-end smoke test on stock 2330 only (writes models/test_2330/)
+│   └── holdings.py            # query current holdings via the broker
 └── utils/
     └── progress.py            # Tee, progress bars, logging helpers
 ```
+
+Import directions (each folder imports only from the ones listed):
+`scripts → everything`; `trainer → evaluate, data, model, utils, config`;
+`evaluate → trading, utils`; `trading → config`; `data → config, utils`;
+`model → nothing`. Nothing imports `scripts/`.
+
+### `src/` top-level modules
+
+| File | Key items |
+|---|---|
+| `config.py` | Paths (`PROJ_ROOT`, `TEJ_DIR`, `CACHE_DIR`, `MODELS_DIR`, `LOGS_DIR`), date windows (`HISTORY_*`, `PRETRAIN_*`, `VALIDATION_*`, `ONLINE_TRAINING_*`, `LIVE_HISTORY_START`), and `DEFAULT_BT` (the backtest config every training run uses). |
+| `runs.py` | `init_run(run_name=None, set_as_current=True)`, `resolve_run(run=None)` (CLI override else `CURRENT`), `read_current`, `next_run_dir`, `tee_session`, and `save_*` / `load_*` for `norm_stats.pkl`, `feature_scheme.json`, `bt_config.json`, `active_universe.json` and the backtest CSVs. Formats stay readable by run1–run18. |
+| `inference.py` | `forecast_latest(model, panel, n_days)` scores the freshest label-less panel dates. `predict_for_yesterday(model, norm_stats, universe, device, feature_mode)` builds features from the cache up to the latest close (live trading). |
 
 ### `src/data/` — data layer
 
 | File | Key items |
 |---|---|
-| `io.py` | `fetch_year(code, year)` / `fetch_range(code, start, end)` — **read-only** wrapper around the local CSV cache at `data/interim/`. Returns empty DataFrame for missing files; the cache is populated by `import_tej.py`. No network access. |
+| `io.py` | `fetch_year(code, year)` / `fetch_range(code, start, end)` — **read-only** wrapper around the local CSV cache at `data/interim/`. Returns empty DataFrame for missing files; the cache is populated by `import_tej.py`. No network access. `load_bars(universe, start, end)` loads every code ever in an index, skipping stocks too thin for one feature window. |
 | `handler.py` | `compute_alpha360(df)` builds (60, 6) tensor per (stock, date). `build_panel(bars)` stacks all stocks into a long-format `PanelTensors(X, y, dates, codes)`. |
 | `processor.py` | `fit_robust_zscore(X_pretrain)` returns `(median, MAD)`; `apply_robust_zscore` + `fillna(value=0)` for features. `csrank_normalize_per_date(y, dates)` for labels. |
-| `universe.py` | **TEJ index mask loader.** `get_index_universe_codes(name)` returns the historical union for `name ∈ {TW50, TM100}` (~99 / ~266 codes). `build_universe_schedule(name, start, end)` returns one row per semi-annual rebalance with `{asof, codes, weights}` looked up from TEJ's monthly snapshots in `data/raw/TEJ/TW50.csv` and `data/raw/TEJ/TM100.csv`. |
+| `universe.py` | **TEJ index mask loader.** `get_index_universe_codes(name)` returns the historical union for `name ∈ {TW50, TM100}` (~99 / ~266 codes). `build_universe_schedule(name, start, end)` returns one row per semi-annual rebalance with `{asof, codes, weights}` looked up from TEJ's monthly snapshots in `data/raw/TEJ/TW50.csv` and `data/raw/TEJ/TM100.csv`. `apply_time_varying_universe(panel, schedule)` keeps only rows whose stock is active on that date. |
 
 ### `src/model/` — neural modules
 
@@ -102,23 +121,22 @@ src/
 | File | Key items |
 |---|---|
 | `maml.py` | `Task` dataclass; `panel_to_task`, `sample_pretrain_tasks` for slicing tasks by trading-date index; `fomaml_step` for one FOMAML bi-level update; `pretrain_offline` for the meta-train loop with early-stop on val IC. |
-| `incremental.py` | `run_incremental(model, panel, ...)` walks forward by `r=20` trading days through the IL window, applies one `fomaml_step` per step, accumulates predictions + per-step IC/RankIC. |
+| `incremental.py` | `run_incremental(model, panel, ...)` walks forward by `r=20` trading days through the IL window, applies one `fomaml_step` per step, accumulates predictions + per-step IC/RankIC. `run_qlib_backtest_with_il(model, il_panel, bars, fcfg, cfg, ...)` is the live-IL backtest `train.py` runs: one FOMAML adapt per 20-day window, then trades those 20 days through `evaluate.backtest_qlib.PortfolioSim`. |
+
+### `src/trading/` — TWSE rules, strategy, broker
+
+| File | Key items |
+|---|---|
+| `rules.py` | TWSE tick rounding for limit orders (`tick_size`, `round_buy/sell`), `SHARES_PER_LOT=1000`, per-side trading costs (`COST_TABLES`, `qlib` / `twse`), and limit-lock detection (`is_limit_locked`). |
+| `strategy.py` | `topk_dropout(target, held, scores, top_k, n_drop)` → `(sells, buys)` and `buy_slot(cash, risk_degree, n_buys)`: qlib's TopkDropoutStrategy, shared by both backtests and `deploy_today.plan_orders`. (The course bridge keeps its own plain top-K callbacks on purpose.) |
+| `broker.py` | The only module that imports the course `stock_api`: `get_raw_holdings`, `parse_holdings`, `submit_orders`, `IntendedOrder`, and `fetch_today_intraday` (yfinance, for `--cheat`). |
 
 ### `src/evaluate/` — metrics + backtest
 
 | File | Key items |
 |---|---|
 | `metrics.py` | `cross_sectional_ic(preds, ys, dates)` → `(mean_IC, ICIR, mean_RankIC, RankICIR)`. Per-date correlation aggregated. |
-| `trading_rules.py` | TWSE tick rounding for limit orders: `tick_size`, `round_buy/sell`, plus `SHARES_PER_LOT=1000`. Trading costs live in `backtest_qlib._COST_TABLES`. |
-| `backtest_qlib.py` | `run_qlib_backtest_with_il(model, il_panel, bars, ...)` — the live-IL backtest `train.py` runs: one FOMAML adapt per 20-day window, then trades those 20 days. `run_qlib_backtest_from_predictions(preds, bars, QlibBTConfig)` replays a saved `predictions.csv`. Both mirror qlib's `TopkDropoutStrategy` + `deal_price="close"` (or `"open"`) execution, with configurable `costs="twse"` or `"qlib"` and `risk_degree=0.95`. Slot per buy = `cash * risk_degree / len(buys)` (qlib exact). |
-| `compute_qlib_metrics.py` | Prints the qlib-style metrics table used in [model_performance.md](model_performance.md) (IC, ICIR, IR, excess return vs the 0050 benchmark) from each run's `equity.csv` + `report.json`. |
-| `run_course_backtest.py` | Bridges DoubleAdapt predictions into the course's `BacktestSystem` (from `thirdparty/stock_project_for_class/backtest_package/`). Pre-builds the framework's stock cache from `data/interim/`, defines `select_stock` / `trade_strategy` mirroring [examplebacktest.py](../thirdparty/stock_project_for_class/backtest_package/stock_backtest_v1/examplebacktest.py), saves `course_backtest.xlsx` per run, optionally uploads to leaderboard via `--upload`. |
-
-### `src/workflow/` — production helpers
-
-| File | Key items |
-|---|---|
-| `forecast.py` | `forecast_latest(model, panel, n_days)` — scores the freshest `n_days` unique dates whose labels don't exist yet. Returns DataFrame sorted by `(date, pred desc)`. |
+| `backtest_qlib.py` | `PortfolioSim(bars, cfg)` trades one day at a time (`trade_day(today, target, scores)`) and returns a `BTResult`. `run_qlib_backtest_from_predictions(preds, bars, QlibBTConfig)` replays a saved `predictions.csv` through it. Mirrors qlib's `TopkDropoutStrategy` + `deal_price="close"` (or `"open"`) execution, with configurable `costs="twse"` or `"qlib"` and `risk_degree=0.95`. Slot per buy = `cash * risk_degree / len(buys)` (qlib exact). |
 
 ### `src/scripts/` — entry points
 
@@ -126,7 +144,10 @@ src/
 |---|---|
 | `import_tej.py` | Reads TEJ half-year CSVs from `data/raw/TEJ/` and writes per-(stock, year) cache files to `data/interim/`. `--universe TW50` (default) / `TM100` / `BOTH` filters which codes to keep. Runs in <30s, no network. |
 | `extend_il.py` | Runs the next r=20-day IL step on an existing run (`--run runN`, `--dry-run` to preview) and appends to its `final.pt`, `il_log.csv` and `predictions.csv`, backing up the old weights first. |
-| `train_il_baseline.py` | Ablation baseline: plain GRU with vanilla MSE pretrain and N=10 SGD fine-tune steps per IL window (no adapters, no FOMAML). Same splits, universe and backtest as `train.py`; writes `models/run18/`. |
+| `train_il_baseline.py` | Ablation baseline: plain GRU with vanilla MSE pretrain and N=10 SGD fine-tune steps per IL window (no adapters, no FOMAML). Same splits, universe and backtest as `train.py`; writes `models/run18/` and points `CURRENT` at it. |
+| `train_lgbm_baseline.py` | Ablation baseline: LightGBM on flattened Alpha360 features, static or refit every r=20 days. Writes the next `models/runN/` but leaves `CURRENT` alone (deploy can't load it). |
+| `compute_qlib_metrics.py` | Prints the qlib-style metrics table used in [model_performance.md](model_performance.md) (IC, ICIR, IR, excess return vs the 0050 benchmark) from each run's `equity.csv` + `report.json`. |
+| `run_course_backtest.py` | Bridges DoubleAdapt predictions into the course's `BacktestSystem` (from `thirdparty/stock_project_for_class/backtest_package/`). Pre-builds the framework's stock cache from `data/interim/`, defines `select_stock` / `trade_strategy` mirroring [examplebacktest.py](../thirdparty/stock_project_for_class/backtest_package/stock_backtest_v1/examplebacktest.py), saves `course_backtest.xlsx` per run, optionally uploads to leaderboard via `--upload`. |
 | `train.py` | The orchestrator. Loads bars → builds panel → applies universe schedule → fits feature norm → pretrain → IL → backtest → live forecast. `--universe TW50` (default) / `TM100` picks which TEJ index to train against. Writes all artifacts to `models/run{N}/`. Tees full stdout/stderr to `logs/train_run{N}_YYYYMMDD_HHMMSS.log`. |
 | `deploy_today.py` | Daily inference + order submission. **Requires `--cash NT$`** (read from the course website). Logs orders to `models/run{N}/orders_YYYYMMDD.csv`, inferences to `inferences_YYYYMMDD.csv`, and tees full stdout to `logs/deploy_YYYYMMDD.log` (appended across multiple calls per day). |
 | `holdings.py` | Query current settled holdings via `Get_User_Stocks`, cross-reference against today's order log to show which submitted orders filled. |
@@ -175,7 +196,7 @@ thirdparty/stock_project_for_class/
 │       │   ├── backtest.py    # BacktestSystem class (set_period → execute_strategy → calc_perf)
 │       │   ├── Stock_API.py   # local copy bundled with the backtest framework
 │       │   └── type.py        # TransactionRecord / User_Inventory / Daily_Asset dataclasses
-│       ├── examplebacktest.py # template our src/evaluate/run_course_backtest.py mirrors
+│       ├── examplebacktest.py # template our src/scripts/run_course_backtest.py mirrors
 │       └── example.py         # live API usage example
 ├── course_example.py          # course's reference example
 ├── project_objective.md       # coursework spec

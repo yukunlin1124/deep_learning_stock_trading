@@ -206,7 +206,7 @@ This means:
 - **No fractional shares.** All `lots` are integer; sub-lot fractional
   capital just sits as cash.
 - **No leverage.** The script never goes short. Buy is skipped if cash is
-  insufficient; the trading_rules in the backtest enforce the same.
+  insufficient; the backtest simulator (`PortfolioSim`) enforces the same.
 - **No same-day flip.** `hold_thresh=1` from `bt_config.json` is enforced
   implicitly via "if held, don't buy again" (we already own it).
 - **No automatic FOMAML update.** Deployment is **inference only**;

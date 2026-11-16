@@ -30,6 +30,7 @@ Usage:
     python src/scripts/import_tej.py
     python src/scripts/import_tej.py --since-year 2016
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,6 +43,7 @@ from src.data.io import CACHE_DIR
 from src.data.universe import get_index_universe_codes
 
 from src.config import TEJ_DIR
+
 # Half-year price files are split by period; see data/raw/TEJ/data.yaml.
 TEJ_SPLITS = ("train", "val", "test")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -72,13 +74,26 @@ def import_year(year: int, universe: set[str]) -> dict[str, int]:
         df = pd.read_csv(path, encoding="cp950", dtype=str)
         # Column indices are stable; alias them to readable names
         df.columns = [
-            "stock_code_id", "name", "date_raw",
-            "open", "high", "low", "close",
-            "volume_k_shares",       # col 7: 成交量(千股) — thousand shares
-            "turnover_M_ntd",        # col 8: 成交值(百萬元) — million NT$
-            "mcap_tse", "mcap_tej", "pb_tse", "pb_tej", "ps_tej",
-            "div_yield", "ret_pct",
-            "warn_a", "disp_d", "circuit_y", "market",
+            "stock_code_id",
+            "name",
+            "date_raw",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume_k_shares",  # col 7: 成交量(千股) — thousand shares
+            "turnover_M_ntd",  # col 8: 成交值(百萬元) — million NT$
+            "mcap_tse",
+            "mcap_tej",
+            "pb_tse",
+            "pb_tej",
+            "ps_tej",
+            "div_yield",
+            "ret_pct",
+            "warn_a",
+            "disp_d",
+            "circuit_y",
+            "market",
         ]
         df = df[df["stock_code_id"].isin(universe)]
         if df.empty:
@@ -104,8 +119,20 @@ def import_year(year: int, universe: set[str]) -> dict[str, int]:
     for code, sub in full.groupby("stock_code_id"):
         sub = sub.sort_values("date").copy()
         sub["change"] = sub["close"].diff().fillna(0.0)
-        out = sub[["date", "capacity", "turnover", "high", "low", "close",
-                   "change", "transaction_volume", "stock_code_id", "open"]]
+        out = sub[
+            [
+                "date",
+                "capacity",
+                "turnover",
+                "high",
+                "low",
+                "close",
+                "change",
+                "transaction_volume",
+                "stock_code_id",
+                "open",
+            ]
+        ]
         path = CACHE_DIR / f"{code}_{year}.csv"
         out.to_csv(path, index=False)
         written[str(code)] = len(out)
@@ -114,13 +141,16 @@ def import_year(year: int, universe: set[str]) -> dict[str, int]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--universe", choices=["TW50", "TM100", "BOTH"], default="TW50",
-                    help="which TEJ index union to import (default TW50; "
-                         "BOTH = union of TW50 ∪ TM100 ≈ 300 codes)")
-    ap.add_argument("--since-year", type=int, default=2016,
-                    help="oldest year to import (default 2016 to match HISTORY_START)")
-    ap.add_argument("--until-year", type=int, default=2026,
-                    help="newest year to import (default 2026)")
+    ap.add_argument(
+        "--universe",
+        choices=["TW50", "TM100", "BOTH"],
+        default="TW50",
+        help="which TEJ index union to import (default TW50; " "BOTH = union of TW50 ∪ TM100 ≈ 300 codes)",
+    )
+    ap.add_argument(
+        "--since-year", type=int, default=2016, help="oldest year to import (default 2016 to match HISTORY_START)"
+    )
+    ap.add_argument("--until-year", type=int, default=2026, help="newest year to import (default 2026)")
     args = ap.parse_args()
 
     if args.universe == "BOTH":
@@ -143,7 +173,7 @@ def main() -> None:
         total_files_written += len(written)
         print(f"  {year}: {len(written)} stocks, {sum(written.values()):>6,} rows")
 
-    print(f"\nDONE in {time.monotonic()-t0:.1f}s — {total_files_written} CSVs in {CACHE_DIR}")
+    print(f"\nDONE in {time.monotonic() - t0:.1f}s — {total_files_written} CSVs in {CACHE_DIR}")
 
     # Per-stock coverage summary
     missing = [c for c, n in coverage.items() if n == 0]

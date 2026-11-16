@@ -192,7 +192,8 @@ from src.data.processor import apply_robust_zscore, fillna
 from src.data.universe import get_index_universe_codes
 from src.model.double_adapt import DoubleAdapt
 from src.trainer.maml import FOMAMLConfig
-from src.evaluate.backtest_qlib import QlibBTConfig, run_qlib_backtest_with_il
+from src.evaluate.backtest_qlib import QlibBTConfig
+from src.trainer.incremental import run_qlib_backtest_with_il
 import pickle
 
 # Load the post-warmup checkpoint + norm stats

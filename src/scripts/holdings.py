@@ -9,23 +9,20 @@ Usage:
     $env:TWSE_PASSWORD="..."
     python src/scripts/holdings.py
 """
+
 from __future__ import annotations
 
 import argparse
 import os
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 
-from src.scripts.deploy_today import parse_holdings
-from stock_api import Get_User_Stocks
+from src.trading.broker import get_raw_holdings, parse_holdings
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
+from src import runs
 from src.config import MODELS_DIR
-
-OUT_BASE = MODELS_DIR
+from src.trading.rules import SHARES_PER_LOT
 
 
 def main() -> None:
@@ -36,7 +33,7 @@ def main() -> None:
     if not args.account or not args.password:
         raise SystemExit("missing TWSE_ACCOUNT / TWSE_PASSWORD (env vars or CLI flags).")
 
-    raw = Get_User_Stocks(args.account, args.password)
+    raw = get_raw_holdings(args.account, args.password)
     holdings = parse_holdings(raw)
 
     print(f"=== Holdings for account ending in ...{args.account[-3:]} ===")
@@ -47,7 +44,7 @@ def main() -> None:
             print(f"  first item type: {type(raw[0]).__name__}")
             print(f"  first item: {raw[0]!r}")
             if len(raw) > 1:
-                print(f"  ...and {len(raw)-1} more")
+                print(f"  ...and {len(raw) - 1} more")
     elif isinstance(raw, dict):
         print(f"raw dict keys: {list(raw.keys())[:10]}")
         print(f"raw sample: {repr(raw)[:300]}")
@@ -56,16 +53,14 @@ def main() -> None:
     print(f"parsed {len(holdings)} positions\n")
 
     if holdings:
-        rows = [{"code": c, "shares": s, "lots": s // 1000}
-                for c, s in sorted(holdings.items())]
+        rows = [{"code": c, "shares": s, "lots": s // SHARES_PER_LOT} for c, s in sorted(holdings.items())]
         print(pd.DataFrame(rows).to_string(index=False))
         print()
 
     # Cross-reference with today's order log if present (now in run{N}/ subdir).
     today = datetime.now().strftime("%Y%m%d")
-    cur_file = OUT_BASE / "CURRENT"
-    run_name = cur_file.read_text().strip() if cur_file.exists() else ""
-    log_path = OUT_BASE / run_name / f"orders_{today}.csv"
+    run_name = runs.read_current() or ""  # no CURRENT -> just report "no order log"
+    log_path = MODELS_DIR / run_name / f"orders_{today}.csv"
     if log_path.exists():
         orders = pd.read_csv(log_path)
         attempted = orders[orders["status"] == "OK"][["side", "code", "lots", "price"]].copy()
@@ -75,8 +70,10 @@ def main() -> None:
             attempted["in_holdings"] = attempted["code"].isin(holdings.keys())
             print(attempted.to_string(index=False))
             filled = attempted["in_holdings"].sum()
-            print(f"\n{filled} / {len(attempted)} BUY orders appear in current holdings "
-                  f"(SELLs would show as REMOVED, not present)")
+            print(
+                f"\n{filled} / {len(attempted)} BUY orders appear in current holdings "
+                f"(SELLs would show as REMOVED, not present)"
+            )
     else:
         print(f"(no order log at {log_path})")
 

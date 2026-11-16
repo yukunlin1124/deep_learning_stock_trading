@@ -11,17 +11,18 @@ Usage:
 (carriage-return / cursor-move writes) from the log file so logs stay
 readable: they keep the `log(...)` / `print(...)` lines and nothing else.
 """
+
 from __future__ import annotations
 
 import sys
-from typing import Iterable, TypeVar
+from typing import Any, Iterable, TypeVar
 
 from tqdm.auto import tqdm
 
 T = TypeVar("T")
 
 
-def pbar(iterable: Iterable[T] | None = None, **kwargs) -> tqdm:
+def pbar(iterable: Iterable[T] | None = None, **kwargs: Any) -> tqdm:
     """tqdm with project defaults (dynamic width, writes to current stderr)."""
     kwargs.setdefault("dynamic_ncols", True)
     kwargs.setdefault("file", sys.stderr)
@@ -29,13 +30,12 @@ def pbar(iterable: Iterable[T] | None = None, **kwargs) -> tqdm:
     return tqdm(iterable, **kwargs)
 
 
-def n_walk_steps(udates, first_idx: int, r: int, end) -> int:
+def n_walk_steps(udates: Any, first_idx: int, r: int, end: Any) -> int:
     """Number of r-day walk-forward steps an IL loop will take (for a bar total).
 
     Mirrors the `while i + r <= len(udates): if udates[i] > end: break` loops.
     """
-    return sum(1 for i in range(first_idx, len(udates) - r + 1, r)
-               if udates[i] <= end)
+    return sum(1 for i in range(first_idx, len(udates) - r + 1, r) if udates[i] <= end)
 
 
 def log(msg: str = "") -> None:
@@ -57,7 +57,7 @@ class Tee:
         self.stream = stream
         self.log_file = log_file
         self._buf = ""
-        self._bar_dirty = False   # bar activity since the last logged line
+        self._bar_dirty = False  # bar activity since the last logged line
 
     def write(self, data):
         self.stream.write(data)

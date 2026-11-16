@@ -567,7 +567,7 @@ df.reset_index().rename(columns={'Date':'date'}).to_csv(
 "@
 
 # 2) Recompute metrics (reads each run's equity.csv + report.json)
-python src/evaluate/compute_qlib_metrics.py
+python src/scripts/compute_qlib_metrics.py
 ```
 
 (The compute script is small — it reads `equity.csv` per run, aligns to

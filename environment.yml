@@ -45,6 +45,14 @@ dependencies:
       - yfinance
       # Progress bars
       - tqdm>=4.66
+      # Lint (same tools as qlib; config in pyproject.toml + .flake8)
+      - black
+      - flake8
+      - pylint
+      - mypy
+      - pre-commit
+      # Tests (tests/; `pytest -m slow` runs the end-to-end 2330 test)
+      - pytest
       # Local editable packages
       - -e .
       - -e ./thirdparty/stock_project_for_class

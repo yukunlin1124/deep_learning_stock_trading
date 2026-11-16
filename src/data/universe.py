@@ -19,20 +19,25 @@ The training pipeline (`src/scripts/train.py`) consumes one of these indices
 as its time-varying active universe; the per-day predictions then run
 through the qlib or course backtest engine.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
-REBALANCE_PER_YEAR = 2          # semi-annual rebalance for build_universe_schedule
+from src.data.handler import PanelTensors
+
+REBALANCE_PER_YEAR = 2  # semi-annual rebalance for build_universe_schedule
 
 
 # ---------- TEJ index CSV loader (TW50 / TM100) ----------
 
 from src.config import TEJ_DIR as _STOCK_DATA_DIR  # data/raw/TEJ
+
 _INDEX_PATHS = {
-    "TW50":  _STOCK_DATA_DIR / "TW50.csv",
+    "TW50": _STOCK_DATA_DIR / "TW50.csv",
     "TM100": _STOCK_DATA_DIR / "TM100.csv",
 }
 
@@ -41,8 +46,7 @@ _index_state_caches: dict[str, dict[pd.Timestamp, list[str]]] = {}
 _index_weight_caches: dict[str, dict[pd.Timestamp, dict[str, float]]] = {}
 
 
-def _parse_tej_index_csv(path: Path) -> tuple[dict[pd.Timestamp, list[str]],
-                                              dict[pd.Timestamp, dict[str, float]]]:
+def _parse_tej_index_csv(path: Path) -> tuple[dict[pd.Timestamp, list[str]], dict[pd.Timestamp, dict[str, float]]]:
     """Parse a TEJ index-constituent CSV into (state_dict, weights_dict).
 
     state[asof]   = sorted list of constituent codes (4-digit strings)
@@ -50,8 +54,15 @@ def _parse_tej_index_csv(path: Path) -> tuple[dict[pd.Timestamp, list[str]],
     """
     df = pd.read_csv(path, encoding="cp950", skiprows=1, dtype=str)
     df.columns = [
-        "date_raw", "code_name", "weight_factor", "float_factor", "limit_factor",
-        "shares_out", "divisor", "prev_close", "prev_mcap_ratio",
+        "date_raw",
+        "code_name",
+        "weight_factor",
+        "float_factor",
+        "limit_factor",
+        "shares_out",
+        "divisor",
+        "prev_close",
+        "prev_mcap_ratio",
     ]
     df["date"] = pd.to_datetime(df["date_raw"], format="%Y/%m/%d")
     # "1101 台泥" -> "1101"
@@ -107,8 +118,7 @@ def _get_index_history(index_name: str) -> dict[pd.Timestamp, list[str]]:
 
     path = _INDEX_PATHS.get(index_name)
     if path is None:
-        raise ValueError(f"unknown index {index_name!r}; "
-                         f"expected one of {list(_INDEX_PATHS) + ['BOTH']}")
+        raise ValueError(f"unknown index {index_name!r}; " f"expected one of {list(_INDEX_PATHS) + ['BOTH']}")
     if not path.exists():
         raise FileNotFoundError(f"missing TEJ index CSV: {path}")
     state, weights = _parse_tej_index_csv(path)
@@ -160,8 +170,8 @@ def get_index_universe_codes(index_name: str) -> list[str]:
 
 # ---------- Rebalance calendar + schedule builder ----------
 
-def rebalance_dates(start: str, end: str,
-                    rebalances_per_year: int = REBALANCE_PER_YEAR) -> list[pd.Timestamp]:
+
+def rebalance_dates(start: str, end: str, rebalances_per_year: int = REBALANCE_PER_YEAR) -> list[pd.Timestamp]:
     """Semi-annual (Jan 1 + Jul 1 by default) rebalance dates in [start, end]."""
     s = pd.Timestamp(start)
     e = pd.Timestamp(end)
@@ -177,9 +187,12 @@ def rebalance_dates(start: str, end: str,
     return out
 
 
-def build_universe_schedule(index_name: str, start: str, end: str,
-                            rebalances_per_year: int = REBALANCE_PER_YEAR,
-                            ) -> pd.DataFrame:
+def build_universe_schedule(
+    index_name: str,
+    start: str,
+    end: str,
+    rebalances_per_year: int = REBALANCE_PER_YEAR,
+) -> pd.DataFrame:
     """Schedule of (asof, codes, weights) per rebalance for the chosen index.
 
     Looks up the official TEJ history; no liquidity ranking needed.
@@ -188,13 +201,36 @@ def build_universe_schedule(index_name: str, start: str, end: str,
     for asof in rebalance_dates(start, end, rebalances_per_year):
         codes = get_index_codes_at(index_name, asof)
         weights = get_index_weights_at(index_name, asof)
-        rows.append({
-            "asof": asof.date(),
-            "n_active": len(codes),
-            "codes": codes,
-            "weights": weights,
-        })
+        rows.append(
+            {
+                "asof": asof.date(),
+                "n_active": len(codes),
+                "codes": codes,
+                "weights": weights,
+            }
+        )
     return pd.DataFrame(rows)
+
+
+def apply_time_varying_universe(panel: PanelTensors, schedule: pd.DataFrame) -> PanelTensors:
+    """Keep only rows whose code is active on its date per the schedule."""
+    if panel.X.shape[0] == 0 or schedule.empty:
+        return panel
+    keep: np.ndarray = np.zeros(len(panel), dtype=bool)
+    sched_asofs = pd.to_datetime(schedule["asof"]).values
+    sched_sets = [set(codes) for codes in schedule["codes"]]
+    panel_dates = pd.to_datetime(panel.dates).values
+    asof_idx = np.searchsorted(sched_asofs, panel_dates, side="right") - 1
+    asof_idx = np.clip(asof_idx, 0, len(sched_asofs) - 1)
+    for row_i, (sidx, code) in enumerate(zip(asof_idx, panel.codes)):
+        if str(code) in sched_sets[sidx]:
+            keep[row_i] = True
+    return PanelTensors(
+        X=panel.X[keep],
+        y=panel.y[keep],
+        dates=panel.dates[keep],
+        codes=panel.codes[keep],
+    )
 
 
 if __name__ == "__main__":
@@ -202,5 +238,6 @@ if __name__ == "__main__":
         union = get_index_universe_codes(idx)
         latest = _index_lookup(idx, pd.Timestamp.now())
         snap = get_index_codes_at(idx, latest)
-        print(f"{idx}: {len(union)} unique codes over history, "
-              f"latest snapshot {latest.date()} has {len(snap)} codes")
+        print(
+            f"{idx}: {len(union)} unique codes over history, " f"latest snapshot {latest.date()} has {len(snap)} codes"
+        )

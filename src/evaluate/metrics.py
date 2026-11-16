@@ -1,11 +1,11 @@
 """Cross-sectional IC / RankIC / ICIR metrics."""
+
 from __future__ import annotations
 
 import numpy as np
 
 
-def cross_sectional_ic(preds: np.ndarray, ys: np.ndarray, dates: np.ndarray
-                       ) -> tuple[float, float, float, float]:
+def cross_sectional_ic(preds: np.ndarray, ys: np.ndarray, dates: np.ndarray) -> tuple[float, float, float, float]:
     """Per-date Pearson and Spearman correlation, aggregated.
     Returns (mean IC, ICIR, mean RankIC, RankICIR).
     """

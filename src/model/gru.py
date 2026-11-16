@@ -1,4 +1,5 @@
 """Base GRU predictor F. Defaults mirror qlib's pytorch_gru."""
+
 from __future__ import annotations
 
 import torch
@@ -10,8 +11,7 @@ class GRUBase(nn.Module):
     Defaults follow qlib qlib/contrib/model/pytorch_gru.py:47-55.
     """
 
-    def __init__(self, input_dim: int = 6, hidden_dim: int = 64,
-                 num_layers: int = 2, dropout: float = 0.0):
+    def __init__(self, input_dim: int = 6, hidden_dim: int = 64, num_layers: int = 2, dropout: float = 0.0):
         super().__init__()
         self.gru = nn.GRU(
             input_size=input_dim,

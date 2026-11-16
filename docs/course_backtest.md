@@ -18,7 +18,7 @@ re-run inference or fine-tune** — the model isn't even loaded.
 
 | Property | Value |
 |---|---|
-| File | [src/evaluate/run_course_backtest.py](../src/evaluate/run_course_backtest.py) |
+| File | [src/scripts/run_course_backtest.py](../src/scripts/run_course_backtest.py) |
 | Framework | `BacktestSystem` from `thirdparty/stock_project_for_class/backtest_package/` |
 | Trade price | today's close (matches [examplebacktest.py](../thirdparty/stock_project_for_class/backtest_package/stock_backtest_v1/examplebacktest.py)) |
 | Fill rule | `low ≤ price ≤ high` (framework check; trivially true at close) |
@@ -98,10 +98,10 @@ course doesn't expose per-day equity — only the final P&L scalar.
 
 ```powershell
 # Default: read models/CURRENT, full IL window in predictions.csv
-python src/evaluate/run_course_backtest.py
+python src/scripts/run_course_backtest.py
 
 # Specific run + operational window
-python src/evaluate/run_course_backtest.py --run run6 `
+python src/scripts/run_course_backtest.py --run run6 `
     --start-date 20240101 --end-date 20260522
 ```
 
@@ -110,7 +110,7 @@ python src/evaluate/run_course_backtest.py --run run6 `
 ```powershell
 $env:TWSE_ACCOUNT = "<your_account>"
 $env:TWSE_PASSWORD = "<your_password>"
-python src/evaluate/run_course_backtest.py --upload `
+python src/scripts/run_course_backtest.py --upload `
     --strategy-name "DoubleAdapt run6 (TEJ)"
 ```
 
@@ -135,7 +135,7 @@ The script:
 
 ```powershell
 foreach ($run in @("run1","run2","run3","run4","run5","run6")) {
-    python src/evaluate/run_course_backtest.py `
+    python src/scripts/run_course_backtest.py `
         --run $run --start-date 20240101 `
         --strategy-name "DoubleAdapt $run"
 }

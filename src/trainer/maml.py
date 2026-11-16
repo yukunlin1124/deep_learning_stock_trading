@@ -13,8 +13,10 @@ Tasks are sliced by trading-date index from a flat PanelTensors blob:
 where r = 20 (task interval). Pretrain samples i uniformly (or sweeps all
 when n_tasks is None).
 """
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -28,8 +30,8 @@ from src.model.double_adapt import DoubleAdapt
 from src.evaluate.metrics import cross_sectional_ic
 from src.utils.progress import pbar, log
 
-
 # ----------------- task sampling -----------------
+
 
 @dataclass
 class Task:
@@ -37,6 +39,7 @@ class Task:
     `train` is the inner-step's "support" set (past r days).
     `test`  is the outer-step's "query"  set (next r days).
     """
+
     x_train: torch.Tensor
     y_train: torch.Tensor
     x_test: torch.Tensor
@@ -50,8 +53,7 @@ def _unique_sorted_dates(panel: PanelTensors) -> np.ndarray:
     return np.unique(panel.dates)
 
 
-def panel_to_task(panel: PanelTensors, train_start_idx: int, r: int,
-                  device: torch.device) -> Task | None:
+def panel_to_task(panel: PanelTensors, train_start_idx: int, r: int, device: torch.device) -> Task | None:
     udates = _unique_sorted_dates(panel)
     if train_start_idx + 2 * r > len(udates):
         return None
@@ -73,8 +75,11 @@ def panel_to_task(panel: PanelTensors, train_start_idx: int, r: int,
 
 
 def sample_pretrain_tasks(
-    panel: PanelTensors, r: int, n_tasks: int | None,
-    rng: np.random.Generator, device: torch.device,
+    panel: PanelTensors,
+    r: int,
+    n_tasks: int | None,
+    rng: np.random.Generator,
+    device: torch.device,
     desc: str = "sampling tasks",
 ) -> list[Task]:
     """If n_tasks is None, sweep ALL valid task starts deterministically."""
@@ -96,13 +101,14 @@ def sample_pretrain_tasks(
 
 # ----------------- core FOMAML step -----------------
 
+
 @dataclass
 class FOMAMLConfig:
-    r: int = 20            # task interval (support len = query len = r)
+    r: int = 20  # task interval (support len = query len = r)
     inner_lr: float = 1e-3
     alpha_reg: float = 0.5
-    lr_phi: float = 1e-3   # MA (base init)
-    lr_psi: float = 1e-2   # DA (feature + label adapters)
+    lr_phi: float = 1e-3  # MA (base init)
+    lr_psi: float = 1e-2  # DA (feature + label adapters)
     weight_decay: float = 0.0
 
 
@@ -132,10 +138,7 @@ def fomaml_step(
     phi_names = list(phi_named.keys())
     phi_params = list(phi_named.values())
     grads = torch.autograd.grad(L_train, phi_params, create_graph=False)
-    theta_named = {
-        k: p - cfg.inner_lr * g.detach()
-        for k, p, g in zip(phi_names, phi_params, grads)
-    }
+    theta_named = {k: p - cfg.inner_lr * g.detach() for k, p, g in zip(phi_names, phi_params, grads)}
 
     # Outer forward on the test set using theta.
     x_test_tilde = model.feature_adapter(task.x_test)
@@ -143,8 +146,7 @@ def fomaml_step(
     pred_test = model.label_adapter(x_test_tilde, pred_test_raw, inverse=True)
     y_test_tilde = model.label_adapter(x_test_tilde, y_test_norm, inverse=False)
 
-    L_test = (F.mse_loss(pred_test, y_test_norm)
-              + cfg.alpha_reg * F.mse_loss(y_test_tilde, y_test_norm))
+    L_test = F.mse_loss(pred_test, y_test_norm) + cfg.alpha_reg * F.mse_loss(y_test_tilde, y_test_norm)
 
     if train:
         L_test.backward()
@@ -154,14 +156,15 @@ def fomaml_step(
 
 # ----------------- pretrain loop -----------------
 
+
 @dataclass
 class PretrainConfig:
-    epochs: int = 200                # qlib GRU n_epochs
+    epochs: int = 200  # qlib GRU n_epochs
     tasks_per_epoch: int = 200
     batch_size: int = 1
-    early_stop_patience: int = 20    # qlib GRU early_stop
+    early_stop_patience: int = 20  # qlib GRU early_stop
     seed: int = 0
-    val_n_tasks: int | None = None   # None -> sweep all val starts
+    val_n_tasks: int | None = None  # None -> sweep all val starts
 
 
 def pretrain_offline(
@@ -171,14 +174,12 @@ def pretrain_offline(
     fcfg: FOMAMLConfig,
     pcfg: PretrainConfig,
     device: torch.device,
-    log_fn=log,
+    log_fn: Callable[[str], None] = log,
 ) -> dict:
     """Offline meta-train on train_panel; early-stop on val IC."""
     rng = np.random.default_rng(pcfg.seed)
-    optim_phi = torch.optim.Adam(model.ma_parameters(), lr=fcfg.lr_phi,
-                                 weight_decay=fcfg.weight_decay)
-    optim_psi = torch.optim.Adam(model.da_parameters(), lr=fcfg.lr_psi,
-                                 weight_decay=fcfg.weight_decay)
+    optim_phi = torch.optim.Adam(model.ma_parameters(), lr=fcfg.lr_phi, weight_decay=fcfg.weight_decay)
+    optim_psi = torch.optim.Adam(model.da_parameters(), lr=fcfg.lr_psi, weight_decay=fcfg.weight_decay)
 
     best_ic = -np.inf
     bad_epochs = 0
@@ -188,33 +189,34 @@ def pretrain_offline(
     epoch_bar = pbar(range(pcfg.epochs), desc="pretrain", unit="epoch")
     for epoch in epoch_bar:
         model.train()
-        train_tasks = sample_pretrain_tasks(train_panel, fcfg.r,
-                                            pcfg.tasks_per_epoch, rng, device,
-                                            desc="sampling train tasks")
+        train_tasks = sample_pretrain_tasks(
+            train_panel, fcfg.r, pcfg.tasks_per_epoch, rng, device, desc="sampling train tasks"
+        )
         train_losses = []
-        optim_phi.zero_grad(); optim_psi.zero_grad()
+        optim_phi.zero_grad()
+        optim_psi.zero_grad()
         ti = -1
-        task_bar = pbar(train_tasks, desc=f"epoch {epoch} train",
-                        unit="task", leave=False)
+        task_bar = pbar(train_tasks, desc=f"epoch {epoch} train", unit="task", leave=False)
         for ti, task in enumerate(task_bar):
             loss, _, _ = fomaml_step(model, task, fcfg, train=True)
             train_losses.append(loss)
             if (ti + 1) % 50 == 0:
                 task_bar.set_postfix(loss=f"{np.mean(train_losses[-50:]):.5f}")
             if (ti + 1) % pcfg.batch_size == 0:
-                optim_phi.step(); optim_psi.step()
-                optim_phi.zero_grad(); optim_psi.zero_grad()
+                optim_phi.step()
+                optim_psi.step()
+                optim_phi.zero_grad()
+                optim_psi.zero_grad()
         if ti >= 0 and (ti + 1) % pcfg.batch_size != 0:
-            optim_phi.step(); optim_psi.step()
-            optim_phi.zero_grad(); optim_psi.zero_grad()
+            optim_phi.step()
+            optim_psi.step()
+            optim_phi.zero_grad()
+            optim_psi.zero_grad()
 
         # validation: still do inner step, just don't backprop outer.
-        val_tasks = sample_pretrain_tasks(val_panel, fcfg.r,
-                                          pcfg.val_n_tasks, rng, device,
-                                          desc="sampling val tasks")
+        val_tasks = sample_pretrain_tasks(val_panel, fcfg.r, pcfg.val_n_tasks, rng, device, desc="sampling val tasks")
         all_p, all_y, all_d = [], [], []
-        for task in pbar(val_tasks, desc=f"epoch {epoch} val",
-                         unit="task", leave=False):
+        for task in pbar(val_tasks, desc=f"epoch {epoch} val", unit="task", leave=False):
             model.zero_grad(set_to_none=True)
             _, pred_test, y_test = fomaml_step(model, task, fcfg, train=False)
             model.zero_grad(set_to_none=True)
@@ -229,13 +231,20 @@ def pretrain_offline(
         else:
             ic = icir = ric = ricir = 0.0
         train_loss = float(np.mean(train_losses)) if train_losses else float("nan")
-        history.append({
-            "epoch": epoch, "train_loss": train_loss,
-            "val_ic": ic, "val_icir": icir,
-            "val_ric": ric, "val_ricir": ricir,
-        })
-        log_fn(f"[pretrain] epoch {epoch:3d}: train_loss={train_loss:.5f} "
-               f"val_ic={ic:.4f} icir={icir:.3f} ric={ric:.4f}")
+        history.append(
+            {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_ic": ic,
+                "val_icir": icir,
+                "val_ric": ric,
+                "val_ricir": ricir,
+            }
+        )
+        log_fn(
+            f"[pretrain] epoch {epoch:3d}: train_loss={train_loss:.5f} "
+            f"val_ic={ic:.4f} icir={icir:.3f} ric={ric:.4f}"
+        )
 
         if ic > best_ic + 1e-6:
             best_ic = ic
@@ -243,11 +252,11 @@ def pretrain_offline(
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
             bad_epochs += 1
-        epoch_bar.set_postfix(loss=f"{train_loss:.5f}", val_ic=f"{ic:.4f}",
-                              best=f"{best_ic:.4f}", bad=bad_epochs)
+        epoch_bar.set_postfix(loss=f"{train_loss:.5f}", val_ic=f"{ic:.4f}", best=f"{best_ic:.4f}", bad=bad_epochs)
         if bad_epochs and bad_epochs >= pcfg.early_stop_patience:
-            log_fn(f"[pretrain] early stop at epoch {epoch} "
-                   f"(no IC improvement for {pcfg.early_stop_patience} epochs)")
+            log_fn(
+                f"[pretrain] early stop at epoch {epoch} " f"(no IC improvement for {pcfg.early_stop_patience} epochs)"
+            )
             break
     epoch_bar.close()
 

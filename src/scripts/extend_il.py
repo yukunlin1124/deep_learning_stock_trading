@@ -14,54 +14,54 @@ Usage:
 Skips automatically if the next test window isn't fully past yet (i.e., not
 enough trading days with labels exist to close the next r-day query window).
 """
+
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
-import pickle
 import shutil
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
+from src import runs
 from src.data.io import fetch_range
-from src.data.universe import get_index_universe_codes, build_universe_schedule
+from src.data.universe import (
+    get_index_universe_codes,
+    build_universe_schedule,
+    apply_time_varying_universe,
+)
 from src.data.handler import build_panel, PanelTensors, PRED_HORIZON, SEQ_LEN, N_FIELDS
 from src.data.processor import apply_robust_zscore, fillna
 from src.model.double_adapt import DoubleAdapt
 from src.trainer.maml import FOMAMLConfig
 from src.trainer.incremental import ILConfig, run_incremental
-from src.scripts.train import apply_time_varying_universe, HISTORY_START
 from src.utils.progress import pbar, log
-from src.config import MODELS_DIR
+from src.config import HISTORY_START
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True, help="run dir name, e.g. run9")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="print plan; do not mutate final.pt / il_log.csv / predictions.csv")
+    ap.add_argument(
+        "--dry-run", action="store_true", help="print plan; do not mutate final.pt / il_log.csv / predictions.csv"
+    )
     args = ap.parse_args()
 
-    run_dir = MODELS_DIR / args.run
-    if not run_dir.exists():
-        sys.exit(f"missing run dir: {run_dir}")
+    run_dir = runs.resolve_run(args.run)  # --run is required, so CURRENT is never used
 
     report = json.loads((run_dir / "report.json").read_text())
     universe = report["universe"]
     fcfg_dict = report["model_config"]["fomaml"]
-    fcfg = FOMAMLConfig(**{k: v for k, v in fcfg_dict.items()
-                           if k in FOMAMLConfig.__dataclass_fields__})
+    fcfg = FOMAMLConfig(
+        **{k: v for k, v in fcfg_dict.items() if k in {f.name for f in dataclasses.fields(FOMAMLConfig)}}
+    )
 
-    scheme_path = run_dir / "feature_scheme.json"
-    feature_mode = (json.loads(scheme_path.read_text()).get("mode", "qlib")
-                    if scheme_path.exists() else "per_field")
+    feature_mode = runs.load_feature_mode(run_dir)
     print(f"run: {args.run}  universe: {universe}  feature_mode: {feature_mode}  r: {fcfg.r}")
 
     il_log = pd.read_csv(run_dir / "il_log.csv")
@@ -69,9 +69,11 @@ def main() -> None:
     test_end_col = "test_end" if "test_end" in il_log.columns else "query_end"
     last_test_end = pd.Timestamp(il_log[test_end_col].iloc[-1])
     next_test_start = last_test_end + pd.Timedelta(days=1)
-    print(f"last IL step: {last_step}  test_end: {last_test_end.date()}  "
-          f"-> next step will train through {last_test_end.date()}, "
-          f"test starting {next_test_start.date()}+")
+    print(
+        f"last IL step: {last_step}  test_end: {last_test_end.date()}  "
+        f"-> next step will train through {last_test_end.date()}, "
+        f"test starting {next_test_start.date()}+"
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
@@ -93,17 +95,20 @@ def main() -> None:
     print(f"loaded {len(bars)} stocks")
 
     panel = build_panel(bars, pred_h=PRED_HORIZON, mode=feature_mode)
-    print(f"raw panel: {len(panel):,}  dates: "
-          f"{pd.Timestamp(panel.dates.min()).date()} -> {pd.Timestamp(panel.dates.max()).date()}")
+    print(
+        f"raw panel: {len(panel):,}  dates: "
+        f"{pd.Timestamp(panel.dates.min()).date()} -> {pd.Timestamp(panel.dates.max()).date()}"
+    )
 
     schedule = build_universe_schedule(universe, HISTORY_START, str(today.date()))
     panel = apply_time_varying_universe(panel, schedule)
 
-    with open(run_dir / "norm_stats.pkl", "rb") as f:
-        norm_stats = pickle.load(f)
+    norm_stats = runs.load_norm_stats(run_dir)
     panel = PanelTensors(
         X=fillna(apply_robust_zscore(panel.X, norm_stats)),
-        y=panel.y, dates=panel.dates, codes=panel.codes,
+        y=panel.y,
+        dates=panel.dates,
+        codes=panel.codes,
     )
     print(f"after universe mask + norm: {len(panel):,} rows")
 
@@ -111,19 +116,25 @@ def main() -> None:
     next_start_np = np.datetime64(next_test_start)
     i_next = int(np.searchsorted(udates, next_start_np, side="left"))
     if i_next < fcfg.r:
-        sys.exit(f"not enough lookback before {next_test_start.date()} "
-                 f"(need {fcfg.r} prior trading days for train window)")
+        sys.exit(
+            f"not enough lookback before {next_test_start.date()} "
+            f"(need {fcfg.r} prior trading days for train window)"
+        )
     if i_next + fcfg.r > len(udates):
         avail = len(udates) - i_next
-        sys.exit(f"next test window not fully closed yet: only {avail}/{fcfg.r} "
-                 f"trading days available after {last_test_end.date()}. "
-                 f"Wait until panel extends another {fcfg.r - avail} trading days.")
+        sys.exit(
+            f"next test window not fully closed yet: only {avail}/{fcfg.r} "
+            f"trading days available after {last_test_end.date()}. "
+            f"Wait until panel extends another {fcfg.r - avail} trading days."
+        )
 
     test_start = pd.Timestamp(udates[i_next])
     test_end_predicted = pd.Timestamp(udates[i_next + fcfg.r - 1])
     train_start = pd.Timestamp(udates[i_next - fcfg.r])
-    print(f"PLAN: train {train_start.date()}..{pd.Timestamp(udates[i_next-1]).date()}  "
-          f"test {test_start.date()}..{test_end_predicted.date()}")
+    print(
+        f"PLAN: train {train_start.date()}..{pd.Timestamp(udates[i_next - 1]).date()}  "
+        f"test {test_start.date()}..{test_end_predicted.date()}"
+    )
 
     if args.dry_run:
         print("--dry-run -> not mutating anything")
@@ -144,11 +155,16 @@ def main() -> None:
 
     new_log["step"] = new_log["step"] + (last_step + 1)
     if test_end_col == "query_end":
-        new_log = new_log.rename(columns={
-            "train_start": "support_start", "train_end": "support_end",
-            "test_start": "query_start", "test_end": "query_end",
-            "n_train": "n_support", "n_test": "n_query",
-        })
+        new_log = new_log.rename(
+            columns={
+                "train_start": "support_start",
+                "train_end": "support_end",
+                "test_start": "query_start",
+                "test_end": "query_end",
+                "n_train": "n_support",
+                "n_test": "n_query",
+            }
+        )
     print("new step(s):")
     print(new_log.to_string(index=False))
 

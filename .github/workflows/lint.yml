@@ -1,0 +1,37 @@
+# Same lint steps as qlib's CI (thirdparty/qlib/.github/workflows/test_qlib_from_source.yml):
+# black --check, flake8, pylint, mypy. All settings live in pyproject.toml and .flake8,
+# so these commands match what you run locally.
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Only the linters are installed: pylint's import-error (E0401) is disabled and
+      # mypy uses ignore_missing_imports + follow_imports=skip, as in qlib, so torch
+      # and the course package aren't needed here.
+      - name: Install linters
+        run: pip install black flake8 pylint mypy
+
+      - name: Lint with black
+        run: black . --check --diff
+
+      - name: Check with flake8
+        run: flake8 src tests docs/figures
+
+      - name: Check with pylint
+        run: pylint src tests
+
+      - name: Check with mypy
+        run: mypy src

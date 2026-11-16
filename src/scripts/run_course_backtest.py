@@ -23,17 +23,18 @@ Differences from examplebacktest.py:
     formula (qlib's `value = cash * risk_degree / len(buys)`).
 
 Usage:
-    python src/evaluate/run_course_backtest.py
-    python src/evaluate/run_course_backtest.py --upload
-    python src/evaluate/run_course_backtest.py --run run5 --upload
+    python src/scripts/run_course_backtest.py
+    python src/scripts/run_course_backtest.py --upload
+    python src/scripts/run_course_backtest.py --run run5 --upload
 """
+
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import List
@@ -41,19 +42,17 @@ from typing import List
 import pandas as pd
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from src import runs
+from src.config import CACHE_DIR, PROJ_ROOT
 
-FRAMEWORK_ROOT = PROJECT_ROOT / "thirdparty" / "stock_project_for_class" / "backtest_package" / "stock_backtest_v1"
+FRAMEWORK_ROOT = PROJ_ROOT / "thirdparty" / "stock_project_for_class" / "backtest_package" / "stock_backtest_v1"
 sys.path.insert(0, str(FRAMEWORK_ROOT))
 
-from src.config import CACHE_DIR, MODELS_DIR
-
-OUT_BASE = MODELS_DIR
-RISK_DEGREE = 0.95                              # qlib default: 95% deployed, 5% cash reserve
+RISK_DEGREE = 0.95  # qlib default: 95% deployed, 5% cash reserve
 
 
 @contextmanager
-def chdir(path: Path):
+def chdir(path: Path) -> Iterator[None]:
     prev = os.getcwd()
     os.chdir(path)
     try:
@@ -98,7 +97,7 @@ def build_framework_cache(codes: List[str], start_date: str, end_date: str) -> N
     if not parts:
         raise SystemExit("no cache files found under data/interim/")
     full = pd.concat(parts, ignore_index=True)
-    full = pd.concat([full, full], ignore_index=True)         # framework quirk: needs duplicates
+    full = pd.concat([full, full], ignore_index=True)  # framework quirk: needs duplicates
     full = full.sort_values(["stock_code", "date"]).reset_index(drop=True)
     full.set_index(["stock_code", "date"], inplace=True)
 
@@ -111,52 +110,45 @@ def build_framework_cache(codes: List[str], start_date: str, end_date: str) -> N
         yaml.dump({"start_date": buffered_start, "end_date": end_date}, f)
 
     n_dates = full.index.get_level_values("date").nunique()
-    print(f"  framework cache: {len(full)//2:,} unique rows x 2 (duplicated), "
-          f"{len(codes)} codes x {n_dates} dates")
+    print(f"  framework cache: {len(full) // 2:,} unique rows x 2 (duplicated), {len(codes)} codes x {n_dates} dates")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", default=None,
-                    help="which models/runN/ to use (default: models/CURRENT)")
-    ap.add_argument("--start-date", default=None,
-                    help="YYYYMMDD; default = earliest date in predictions.csv")
-    ap.add_argument("--end-date", default=None,
-                    help="YYYYMMDD; default = latest date in predictions.csv")
-    ap.add_argument("--cash", type=float, default=100_000.0,
-                    help="framework cash units (100k ~= 100M NTD at the framework's "
-                         "implicit 1000x scaling). Default = 100M starting cash.")
-    ap.add_argument("--strategy-name", default=None,
-                    help="leaderboard label; default 'DoubleAdapt {run} (full IL)'")
-    ap.add_argument("--upload", action="store_true",
-                    help="upload results to course leaderboard after backtest")
+    ap.add_argument("--run", default=None, help="which models/runN/ to use (default: models/CURRENT)")
+    ap.add_argument("--start-date", default=None, help="YYYYMMDD; default = earliest date in predictions.csv")
+    ap.add_argument("--end-date", default=None, help="YYYYMMDD; default = latest date in predictions.csv")
+    ap.add_argument(
+        "--cash",
+        type=float,
+        default=100_000.0,
+        help="framework cash units (100k ~= 100M NTD at the framework's "
+        "implicit 1000x scaling). Default = 100M starting cash.",
+    )
+    ap.add_argument("--strategy-name", default=None, help="leaderboard label; default 'DoubleAdapt {run} (full IL)'")
+    ap.add_argument("--upload", action="store_true", help="upload results to course leaderboard after backtest")
     ap.add_argument("--account", default=os.environ.get("TWSE_ACCOUNT"))
     ap.add_argument("--password", default=os.environ.get("TWSE_PASSWORD"))
     args = ap.parse_args()
 
-    load_env_file(PROJECT_ROOT / ".env")
+    load_env_file(PROJ_ROOT / ".env")
     if args.account is None:
         args.account = os.environ.get("TWSE_ACCOUNT")
     if args.password is None:
         args.password = os.environ.get("TWSE_PASSWORD")
 
-    if args.run:
-        run_dir = OUT_BASE / args.run
-    else:
-        cur_file = OUT_BASE / "CURRENT"
-        if not cur_file.exists():
-            raise SystemExit(f"missing {cur_file}; pass --run runX")
-        run_dir = OUT_BASE / cur_file.read_text().strip()
+    run_dir = runs.resolve_run(args.run)
     print(f"using {run_dir.name}/")
 
     if args.upload and (not args.account or not args.password):
-        raise SystemExit("--upload requires TWSE_ACCOUNT + TWSE_PASSWORD "
-                         "(env vars, --account/--password, or .env file)")
+        raise SystemExit(
+            "--upload requires TWSE_ACCOUNT + TWSE_PASSWORD (env vars, --account/--password, or .env file)"
+        )
 
     preds = pd.read_csv(run_dir / "predictions.csv")
     preds["date"] = pd.to_datetime(preds["date"])
     preds["stock_code_id"] = preds["stock_code_id"].astype(str)
-    bt_cfg = json.loads((run_dir / "bt_config.json").read_text())
+    bt_cfg = runs.load_bt_config(run_dir)
     top_k = int(bt_cfg["top_k"])
     threshold = float(bt_cfg.get("cost_alpha_bps", 0.0)) / 1e4
     print(f"  bt_config: top_k={top_k}, cost_alpha={threshold:.4f}")
@@ -240,10 +232,12 @@ def main() -> None:
     # ---------- driver (mirrors examplebacktest.py's __main__) ----------
 
     # Skip the framework's all-TWSE download; only fetch codes in our universe
-    from backtest.Stock_API import Stock_API as _SA  # noqa: E402
+    # Imported here: backtest/ is only importable once sys.path points at the course framework.
+    from backtest.Stock_API import Stock_API as _SA  # noqa: E402  # pylint: disable=import-outside-toplevel
+
     _SA.get_all_stock_information = staticmethod(lambda: codes)
 
-    from backtest.backtest import BacktestSystem  # noqa: E402
+    from backtest.backtest import BacktestSystem  # noqa: E402  # pylint: disable=import-outside-toplevel
 
     print(f"\nrunning backtest...")
     with chdir(FRAMEWORK_ROOT):
@@ -257,9 +251,7 @@ def main() -> None:
             raise SystemExit("calculate_performance returned None (no trades?)")
 
         # Framework's upload reads "backtest_performance.xlsx" from CWD (hardcoded).
-        backtest.save_performance_to_xls(
-            strategy_name, performance, performance_detail, "backtest_performance.xlsx"
-        )
+        backtest.save_performance_to_xls(strategy_name, performance, performance_detail, "backtest_performance.xlsx")
         run_xls = run_dir / "course_backtest.xlsx"
         shutil.copy("backtest_performance.xlsx", run_xls)
 

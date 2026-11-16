@@ -31,6 +31,7 @@ build_panel(bars) returns a PanelTensors with:
     dates : (N,)       datetime64
     codes : (N,)       object/str
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -59,8 +60,7 @@ FIELDS = ["close", "open", "high", "low", "vwap", "volume"]
 FEATURE_MODE = "qlib"
 
 
-def compute_alpha360(df: pd.DataFrame, pred_h: int = PRED_HORIZON,
-                     mode: str = FEATURE_MODE) -> pd.DataFrame:
+def compute_alpha360(df: pd.DataFrame, pred_h: int = PRED_HORIZON, mode: str = FEATURE_MODE) -> pd.DataFrame:
     """Build per-stock Alpha360 frame.
     df columns required: date, open, high, low, close, capacity, turnover.
     Returns DataFrame with columns: date, stock_code_id, X, y_fwd.
@@ -104,8 +104,7 @@ def compute_alpha360(df: pd.DataFrame, pred_h: int = PRED_HORIZON,
                 close_t = eps
             if abs(vol_t) < eps:
                 vol_t = eps
-            denom = np.array([close_t, close_t, close_t, close_t, close_t, vol_t],
-                             dtype=fields_arr.dtype)
+            denom = np.array([close_t, close_t, close_t, close_t, close_t, vol_t], dtype=fields_arr.dtype)
         elif mode == "per_field":
             # legacy: each field / its own lag-0 (lag-0 row becomes [1,1,1,1,1,1])
             denom = win[-1].copy()
@@ -116,12 +115,14 @@ def compute_alpha360(df: pd.DataFrame, pred_h: int = PRED_HORIZON,
         if not np.isfinite(X).all():
             continue
         y = label[t]
-        out_rows.append({
-            "date": dates[t],
-            "stock_code_id": code,
-            "X": X.astype(np.float32),
-            "y_fwd": float(y) if np.isfinite(y) else np.nan,
-        })
+        out_rows.append(
+            {
+                "date": dates[t],
+                "stock_code_id": code,
+                "X": X.astype(np.float32),
+                "y_fwd": float(y) if np.isfinite(y) else np.nan,
+            }
+        )
     return pd.DataFrame(out_rows)
 
 
@@ -142,21 +143,16 @@ class PanelTensors:
         s = np.datetime64(pd.Timestamp(start))
         e = np.datetime64(pd.Timestamp(end))
         mask = (self.dates >= s) & (self.dates <= e)
-        return PanelTensors(X=self.X[mask], y=self.y[mask],
-                            dates=self.dates[mask], codes=self.codes[mask])
+        return PanelTensors(X=self.X[mask], y=self.y[mask], dates=self.dates[mask], codes=self.codes[mask])
 
     def drop_nan_labels(self) -> "PanelTensors":
         m = np.isfinite(self.y)
-        return PanelTensors(X=self.X[m], y=self.y[m],
-                            dates=self.dates[m], codes=self.codes[m])
+        return PanelTensors(X=self.X[m], y=self.y[m], dates=self.dates[m], codes=self.codes[m])
 
 
-def build_panel(bars: dict[str, pd.DataFrame],
-                pred_h: int = PRED_HORIZON,
-                mode: str = FEATURE_MODE) -> PanelTensors:
+def build_panel(bars: dict[str, pd.DataFrame], pred_h: int = PRED_HORIZON, mode: str = FEATURE_MODE) -> PanelTensors:
     pieces = []
-    for code, df in pbar(bars.items(), total=len(bars),
-                         desc="building Alpha360", unit="stock"):
+    for code, df in pbar(bars.items(), total=len(bars), desc="building Alpha360", unit="stock"):
         if df.empty or len(df) < SEQ_LEN + pred_h:
             continue
         feat = compute_alpha360(df, pred_h=pred_h, mode=mode)
@@ -180,6 +176,7 @@ def build_panel(bars: dict[str, pd.DataFrame],
 
 if __name__ == "__main__":
     from src.data.io import fetch_range
+
     df = fetch_range("1101", "2021-01-01", "2023-12-31")
     feat = compute_alpha360(df)
     print(f"feature rows: {len(feat)}")

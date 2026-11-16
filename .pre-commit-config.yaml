@@ -1,0 +1,18 @@
+# Same hooks as qlib (thirdparty/qlib/.pre-commit-config.yaml): black + flake8.
+# Settings come from pyproject.toml ([tool.black]) and .flake8.
+# qlib pins black 23.7.0 / flake8 4.0.1; those predate Python 3.12's f-string
+# tokenizer change (flake8 4 reports false errors on 3.12+), so we pin
+# current releases instead.
+#
+#   pre-commit install          # run on every `git commit`
+#   pre-commit run --all-files  # run on the whole repo
+repos:
+-   repo: https://github.com/psf/black
+    rev: 26.10.1
+    hooks:
+    -   id: black
+
+-   repo: https://github.com/PyCQA/flake8
+    rev: 7.5.0
+    hooks:
+    -   id: flake8

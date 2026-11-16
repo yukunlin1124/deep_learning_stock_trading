@@ -194,8 +194,10 @@ Re-tune `top_k` / `n_drop` when:
 
 ## References
 
-- [src/evaluate/backtest_qlib.py](../src/evaluate/backtest_qlib.py) — `QlibBTConfig`, `run_qlib_backtest_with_il`, `run_qlib_backtest_from_predictions`
-- [src/evaluate/trading_rules.py](../src/evaluate/trading_rules.py) — commission, tax, lot, tick rules
+- [src/evaluate/backtest_qlib.py](../src/evaluate/backtest_qlib.py) — `QlibBTConfig`, `PortfolioSim`, `run_qlib_backtest_from_predictions`
+- [src/trading/strategy.py](../src/trading/strategy.py) — `topk_dropout` selection + `buy_slot` sizing (shared by backtest and live trading)
+- [src/trainer/incremental.py](../src/trainer/incremental.py) — `run_qlib_backtest_with_il` (live-IL backtest)
+- [src/trading/rules.py](../src/trading/rules.py) — commission, tax, lot, tick rules, limit-lock check
 - [thirdparty/stock_project_for_class/rules.md](../thirdparty/stock_project_for_class/rules.md) — TWSE trading-rules source of truth
 - qlib reference: [thirdparty/qlib/qlib/contrib/strategy/signal_strategy.py:75-128](../thirdparty/qlib/qlib/contrib/strategy/signal_strategy.py#L75-L128) — `TopkDropoutStrategy` class
 - qlib YAML conventions: any file under [thirdparty/qlib/examples/benchmarks/*/workflow_config_*.yaml](../thirdparty/qlib/examples/benchmarks/)

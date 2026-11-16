@@ -10,19 +10,19 @@ Mirrors qlib's standard GRU+Alpha360 workflow processors:
 CSRankNorm is applied at TRAINING time inside fomaml_step (not baked into the
 panel) because the per-date grouping depends on the task slice.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 import numpy as np
-import pandas as pd  # noqa: F401  (kept for callers re-importing through this module)
 import torch
 
 
 @dataclass
 class RobustZScoreStats:
-    median: np.ndarray   # (60, 6)
-    mad: np.ndarray      # (60, 6)
+    median: np.ndarray  # (60, 6)
+    mad: np.ndarray  # (60, 6)
 
 
 def fit_robust_zscore(X_pretrain: np.ndarray) -> RobustZScoreStats:
@@ -33,8 +33,7 @@ def fit_robust_zscore(X_pretrain: np.ndarray) -> RobustZScoreStats:
     return RobustZScoreStats(median=median, mad=mad)
 
 
-def apply_robust_zscore(X: np.ndarray, stats: RobustZScoreStats,
-                        clip: float = 3.0) -> np.ndarray:
+def apply_robust_zscore(X: np.ndarray, stats: RobustZScoreStats, clip: float = 3.0) -> np.ndarray:
     out = (X - stats.median[None]) / (1.4826 * stats.mad[None])
     if clip is not None:
         np.clip(out, -clip, clip, out=out)
@@ -45,15 +44,14 @@ def fillna(X: np.ndarray, value: float = 0.0) -> np.ndarray:
     return np.where(np.isnan(X), value, X).astype(np.float32)
 
 
-def csrank_normalize_per_date(y: torch.Tensor, dates: np.ndarray
-                              ) -> torch.Tensor:
+def csrank_normalize_per_date(y: torch.Tensor, dates: np.ndarray) -> torch.Tensor:
     """Per-date CSRankNorm. Within each unique date, rank values 1..N, then
     normalize so the result has unit variance (under uniform-rank assumption).
     """
     out = torch.empty_like(y)
     udates = np.unique(dates)
     for d in udates:
-        m = (dates == d)
+        m = dates == d
         idx = torch.from_numpy(m).to(y.device)
         vals = y[idx]
         n = int(vals.numel())

@@ -1,0 +1,16 @@
+# Same rules as qlib (thirdparty/qlib/.github/workflows/test_qlib_from_source.yml).
+# Ignored codes, per qlib's reasoning:
+#   E501  line too long        — black enforces 120 instead
+#   F541  f-string without placeholders
+#   E266  too many leading '#' for block comment
+#   E402  module-level import not at top of file
+#   W503  line break before binary operator — black breaks long arithmetic this way
+#   E731  lambda assignment
+#   E203  whitespace before ':' — conflicts with black's slice formatting
+[flake8]
+max-line-length = 120
+ignore = E501,F541,E266,E402,W503,E731,E203
+per-file-ignores =
+    __init__.py:F401,F403
+# Anchored with ./ — a bare "data" would also skip src/data/.
+exclude = .git,__pycache__,./thirdparty,./data,./models,./logs
