@@ -115,7 +115,7 @@ def build_framework_cache(codes: List[str], start_date: str, end_date: str) -> N
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", default=None, help="which models/runN/ to use (default: models/CURRENT)")
+    ap.add_argument("--run", default=None, help="MLflow run to use, e.g. run9 (default: the run tagged current)")
     ap.add_argument("--start-date", default=None, help="YYYYMMDD; default = earliest date in predictions.csv")
     ap.add_argument("--end-date", default=None, help="YYYYMMDD; default = latest date in predictions.csv")
     ap.add_argument(

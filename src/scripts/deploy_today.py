@@ -21,7 +21,7 @@ Cheat mode (--cheat):
      sanity-checking ("what's the best execution we could get today?") —
      NOT for live trading. Stocks without today's yfinance bar are skipped.
 
-Trading config is loaded from models/bt_config.json so it stays
+Trading config is loaded from the run's bt_config.json so it stays
 identical to whatever the backtest used.
 
 Credentials:
@@ -36,7 +36,7 @@ Run (--cash is REQUIRED; copy the liquid cash figure from the course website):
    $env:TWSE_PASSWORD="..."
    python src/scripts/deploy_today.py --cash 9500000
 
-Logs every intended/submitted order to models/run{N}/orders_YYYYMMDD.csv.
+Logs every intended/submitted order to orders_YYYYMMDD.csv in the run's MLflow artifacts.
 """
 
 from __future__ import annotations
@@ -252,7 +252,7 @@ def main() -> None:
         "website shows this; pass it here. Slot per buy = "
         "cash * risk_degree / len(buys).",
     )
-    ap.add_argument("--run", default=None, help="which models/runN/ to load (default: read models/CURRENT)")
+    ap.add_argument("--run", default=None, help="MLflow run to load, e.g. run9 (default: the run tagged current)")
     ap.add_argument(
         "--cheat",
         action="store_true",

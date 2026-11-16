@@ -97,7 +97,7 @@ course doesn't expose per-day equity — only the final P&L scalar.
 ### Dry (no leaderboard upload)
 
 ```powershell
-# Default: read models/CURRENT, full IL window in predictions.csv
+# Default: the current run, full IL window in predictions.csv
 python src/scripts/run_course_backtest.py
 
 # Specific run + operational window
@@ -123,7 +123,7 @@ The script:
 
 | Flag | Default | Effect |
 |---|---|---|
-| `--run` | reads `models/CURRENT` | which `runN/` to use |
+| `--run` | the current run (MLflow tag `current`) | which `runN` to use |
 | `--start-date` | min date in `predictions.csv` | YYYYMMDD |
 | `--end-date` | max date in `predictions.csv` | YYYYMMDD |
 | `--cash` | `100_000` (framework units = NT$100M at framework's implicit 1000× scaling) | starting cash |
@@ -142,7 +142,7 @@ foreach ($run in @("run1","run2","run3","run4","run5","run6")) {
 ```
 
 Each call rebuilds the framework's local stock cache (~5s) and writes the
-per-run Excel output to `models/{run}/course_backtest.xlsx`.
+per-run Excel output to `course_backtest.xlsx` in the run's MLflow artifacts.
 
 ## Caveats
 

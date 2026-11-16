@@ -37,7 +37,7 @@ One `python src/scripts/train.py --universe TW50` invocation executes:
 └─────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼
-                  models/runN/    (deployable to deploy_today.py)
+                  MLflow run runN in mlruns/    (deployable to deploy_today.py)
 ```
 
 The split into three stages is operational, not architectural — the
@@ -239,10 +239,10 @@ handoff from pretrain to IL (see [model_env.md](model_env.md)).
        emits 20 sequential 1-day predictions
 ```
 
-Verified against [run9's il_log.csv](../models/run9/il_log.csv): for
+Verified against run9's `il_log.csv` (an MLflow artifact): for
 all 28 consecutive live-IL tasks, `train_start[k+1] == test_start[k]`
 holds — chained rolling, no overlap, no gap. Same for the 25 warmup
-tasks in [run9's warmup_log.csv](../models/run9/warmup_log.csv).
+tasks in run9's `warmup_log.csv`.
 (Earlier runs use the legacy `support_*` / `query_*` column names —
 re-running training under the renamed code emits the new column names.)
 
@@ -366,7 +366,7 @@ meta_valid_set = panel.slice_by_date(VALIDATION_START, VALIDATION_END)
 ## What lands on disk per run
 
 ```
-models/run{N}/
+mlruns/artifacts/doubleadapt/<run_id>/artifacts/     (MLflow run run{N})
 ├── pretrained.pt          ← Stage 1 best-val-IC checkpoint
 ├── final_prep.pt          ← Stage 2 post-warmup checkpoint
 ├── final.pt               ← Stage 3 final checkpoint (used by deploy_today)
@@ -382,11 +382,14 @@ models/run{N}/
 ├── trades.csv             ← Per-trade fills (Stage 3)
 ├── backtest_daily.csv     ← Per-day positions, cash, deal events (Stage 3)
 ├── live_forecast.csv      ← Predictions for the most recent r days (no labels yet)
-└── report.json            ← Roll-up: IC/ICIR/RankIC/RankICIR + backtest summary
+├── report.json            ← Roll-up: IC/ICIR/RankIC/RankICIR + backtest summary
+├── train.log              ← Full console log of the session
+└── code_diff.txt          ← Uncommitted code at training time (qlib-style)
 ```
 
-`models/CURRENT` is a one-line text file pointing at the latest
-runN/. `deploy_today.py` reads it by default; override with `--run runX`.
+The same numbers are also MLflow params/metrics, so runs can be compared in
+`mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db`. The run tagged `current=true` is what
+`deploy_today.py` reads by default; override with `--run runX`.
 
 ## Known deviations from the DoubleAdapt paper
 

@@ -13,11 +13,12 @@ Environment: conda env `dlst` (`environment.yml`). Full file walkthrough:
 - Inference on the newest dates: `src/inference.py`.
 - TWSE market rules, portfolio strategy, broker API (`stock_api`): `src/trading/`.
 - Metrics and the backtest simulator: `src/evaluate/`.
-- Run folders (`models/run{N}/`, `CURRENT`, artifacts, session logs): only through `src/runs.py`.
+- Runs are MLflow runs in `mlruns/` (named `run{N}`; the deployed one is tagged `current=true`).
+  Create, find, read and log to them only through `src/runs.py`.
 - Everything you run: `src/scripts/` (flat). Scripts import from `src/`, never from each other.
 - Tests: `tests/` (`pytest -m slow` runs the end-to-end 2330 test).
 
-Skip when searching: `data/` (CSV data), `models/` (run outputs), `logs/`,
+Skip when searching: `data/` (CSV data), `mlruns/` (MLflow runs), `logs/`,
 `thirdparty/` (vendored qlib + course package), `docs/*.pdf|docx|png`,
 `__pycache__/`, `.venv/`.
 
@@ -26,7 +27,7 @@ Skip when searching: `data/` (CSV data), `models/` (run outputs), `logs/`,
 - Import directions: `scripts → everything`; `trainer → evaluate, data, model`;
   `evaluate → trading`; `trading → config`; `data → config`. Nothing imports `scripts/`.
 - Never move or rename `src/data/processor.py` or `RobustZScoreStats`: every
-  `models/*/norm_stats.pkl` pickles it by module path.
-- Keep `models/run{N}/` file names and JSON keys stable; run1–run18 must stay loadable.
+  run's `norm_stats.pkl` (in `mlruns/`) pickles it by module path.
+- Keep run artifact file names and JSON keys stable; run1–run20 (migrated into MLflow) must stay loadable.
 - Backtest outputs depend on `PYTHONHASHSEED` (tie order in
   `trading/strategy.topk_dropout`); pin it when comparing runs byte for byte.

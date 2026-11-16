@@ -24,9 +24,11 @@ ENV/
 /data/external/*
 !/data/*/.gitkeep
 
-# Trained runs + session logs (regenerable, large)
-/models/
+# MLflow store (runs, models, train logs) + deploy logs (large; see src/runs.py)
+/mlruns/
 /logs/
+# Pre-MLflow run folders (migrated into mlruns/)
+/models/
 
 # External reference clones (qlib, course repo) — kept locally, untracked.
 # See README "Prerequisites" for the clone URLs.

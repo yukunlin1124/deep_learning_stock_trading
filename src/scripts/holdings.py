@@ -2,7 +2,7 @@
 
 Reads credentials from env vars TWSE_ACCOUNT / TWSE_PASSWORD (or --account /
 --password CLI flags). Cross-references against the most recent
-models/orders_YYYYMMDD.csv to mark which of today's orders filled.
+the current run's orders_YYYYMMDD.csv to mark which of today's orders filled.
 
 Usage:
     $env:TWSE_ACCOUNT="..."
@@ -16,12 +16,13 @@ import argparse
 import os
 from datetime import datetime
 
+from pathlib import Path
+
 import pandas as pd
 
 from src.trading.broker import get_raw_holdings, parse_holdings
 
 from src import runs
-from src.config import MODELS_DIR
 from src.trading.rules import SHARES_PER_LOT
 
 
@@ -57,10 +58,10 @@ def main() -> None:
         print(pd.DataFrame(rows).to_string(index=False))
         print()
 
-    # Cross-reference with today's order log if present (now in run{N}/ subdir).
+    # Cross-reference with today's order log if present (an artifact of the current run).
     today = datetime.now().strftime("%Y%m%d")
-    run_name = runs.read_current() or ""  # no CURRENT -> just report "no order log"
-    log_path = MODELS_DIR / run_name / f"orders_{today}.csv"
+    run_name = runs.read_current()  # no current run -> just report "no order log"
+    log_path = runs.resolve_run(run_name) / f"orders_{today}.csv" if run_name else Path("<no current run>")
     if log_path.exists():
         orders = pd.read_csv(log_path)
         attempted = orders[orders["status"] == "OK"][["side", "code", "lots", "price"]].copy()

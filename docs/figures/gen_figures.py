@@ -19,10 +19,18 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
+from src import runs
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = PROJECT_ROOT / "docs" / "figures"
 OUT_DIR.mkdir(exist_ok=True)
-OUTPUT_BASE = PROJECT_ROOT / "models"
+# Runs live in MLflow (mlruns/); map run name -> artifact folder once.
+RUN_DIRS = runs.list_runs()
+
+
+def run_dir(run: str) -> Path:
+    return RUN_DIRS.get(run, PROJECT_ROOT / "<missing run>" / run)
+
 
 OP_WINDOW_START = "2024-01-02"
 OP_WINDOW_END = "2026-04-30"
@@ -62,7 +70,7 @@ PALETTE = {
 
 
 def load_equity(run: str) -> pd.DataFrame | None:
-    p = OUTPUT_BASE / run / "equity.csv"
+    p = run_dir(run) / "equity.csv"
     if not p.exists():
         print(f"  skip {run}: no equity.csv")
         return None
@@ -82,7 +90,7 @@ def load_benchmark() -> pd.DataFrame:
 
 
 def load_summary(run: str) -> dict | None:
-    p = OUTPUT_BASE / run / "report.json"
+    p = run_dir(run) / "report.json"
     if not p.exists():
         return None
     r = json.loads(p.read_text())
@@ -121,7 +129,7 @@ def figure_1_equity_curves():
 
 def figure_2_ic_trajectory():
     print("[figure 2] ic_trajectory (run9)")
-    p = OUTPUT_BASE / "run9" / "il_log.csv"
+    p = run_dir("run9") / "il_log.csv"
     if not p.exists():
         print("  skip: run9/il_log.csv missing")
         return

@@ -23,7 +23,7 @@ deep_learning_stock_trading/
 │   ├── interim/               # per-(stock, year) bar cache + 0050_benchmark.csv (gitignored; from import_tej.py)
 │   ├── processed/             # final model-ready datasets (unused for now)
 │   └── external/              # non-TEJ third-party data (unused for now)
-├── models/                    # trained runs: run{N}/, CURRENT pointer, test_2330/ (gitignored)
+├── mlruns/                    # MLflow store: one run per training run (gitignored)
 ├── logs/                      # train / deploy session logs (gitignored)
 ├── thirdparty/                # external code (gitignored)
 │   ├── qlib/                  # qlib clone — reference only (never imported)
@@ -40,7 +40,7 @@ deep_learning_stock_trading/
 | `src/` | All code that runs (data, model, trainer, trading, evaluation, scripts) |
 | `tests/` | pytest tests. `test_pipeline_2330.py` is marked `slow` (it trains a model). |
 | `data/interim/` | Rebuildable bar cache written by `import_tej.py`, read through `src/data/io.py`. Safe to delete. |
-| `models/` | One `run{N}/` folder per training run (see [`models/`](#models--training-artifacts) below), the `CURRENT` pointer, and `test_2330/` from the smoke test. |
+| `mlruns/` | MLflow store (`mlflow.db` + `artifacts/`): one MLflow run per training run, holding its model, predictions, metrics, `train.log`, command and git diff. See [`mlruns/`](#mlruns--mlflow-runs) below. |
 | `logs/` | Session logs (see [`logs/`](#logs--session-logs-gitignored) below). |
 | `data/raw/TEJ/` | TEJ raw inputs, described in `data/raw/TEJ/data.yaml`: 31 half-year price CSVs split into `train/` (`2011_H1` → `2021_H2`), `val/` (`2022_H1` → `2023_H2`) and `test/` (`2024_H1` → `2026_H1`), plus `TW50.csv` (184 monthly TW50 snapshots, 2011-2026) + `TM100.csv` (184 monthly TM100 snapshots). cp950-encoded. Read by `src/scripts/import_tej.py` and `src/data/universe.py`. |
 | `thirdparty/qlib/` | Microsoft's qlib fork — referenced for architecture parity, *not* imported at runtime |
@@ -53,7 +53,7 @@ deep_learning_stock_trading/
 src/
 ├── __init__.py
 ├── config.py                  # shared constants: paths, date windows, DEFAULT_BT (imports nothing from src/)
-├── runs.py                    # models/run{N}/ contract: allocate, CURRENT, session logs, artifact save/load
+├── runs.py                    # MLflow runs: start, find, current tag, metric logging, artifact save/load
 ├── inference.py               # forecast_latest (panel) + predict_for_yesterday (live bars)
 ├── data/
 │   ├── io.py                  # read-only OHLC cache wrapper + load_bars(universe)
@@ -77,7 +77,7 @@ src/
 │   ├── import_tej.py          # populate data/interim/ from TEJ half-year CSVs
 │   ├── train.py               # main entry point (pretrain → IL → backtest → forecast)
 │   ├── train_il_baseline.py   # ablation: plain GRU + vanilla fine-tune IL (no DoubleAdapt), run18
-│   ├── train_lgbm_baseline.py # ablation: LightGBM on flattened Alpha360 (does not move CURRENT)
+│   ├── train_lgbm_baseline.py # ablation: LightGBM on flattened Alpha360 (does not take the current tag)
 │   ├── extend_il.py           # append the next IL step(s) to an existing run as new data arrives
 │   ├── run_course_backtest.py # bridge model preds → course's BacktestSystem
 │   ├── compute_qlib_metrics.py # IC / IR / excess-return table vs 0050 for every run
@@ -96,8 +96,8 @@ Import directions (each folder imports only from the ones listed):
 
 | File | Key items |
 |---|---|
-| `config.py` | Paths (`PROJ_ROOT`, `TEJ_DIR`, `CACHE_DIR`, `MODELS_DIR`, `LOGS_DIR`), date windows (`HISTORY_*`, `PRETRAIN_*`, `VALIDATION_*`, `ONLINE_TRAINING_*`, `LIVE_HISTORY_START`), and `DEFAULT_BT` (the backtest config every training run uses). |
-| `runs.py` | `init_run(run_name=None, set_as_current=True)`, `resolve_run(run=None)` (CLI override else `CURRENT`), `read_current`, `next_run_dir`, `tee_session`, and `save_*` / `load_*` for `norm_stats.pkl`, `feature_scheme.json`, `bt_config.json`, `active_universe.json` and the backtest CSVs. Formats stay readable by run1–run18. |
+| `config.py` | Paths (`PROJ_ROOT`, `TEJ_DIR`, `CACHE_DIR`, `MLRUNS_DIR`, `TRACKING_URI`, `ARTIFACT_ROOT`, `LOGS_DIR`), date windows (`HISTORY_*`, `PRETRAIN_*`, `VALIDATION_*`, `ONLINE_TRAINING_*`, `LIVE_HISTORY_START`), and `DEFAULT_BT` (the backtest config every training run uses). |
+| `runs.py` | MLflow run handling in qlib's recorder style. `init_run(run_name=None, experiment=..., set_as_current=True)` starts an MLflow run, logs `cmd-sys.argv` and `code_diff.txt`, tees to `train.log`, returns the artifact folder. `resolve_run(run=None)` (CLI override else the run tagged `current`), `find_run`, `list_runs`, `set_current`, `log_metrics` / `log_params` / `log_report` (no-ops outside a run), and `save_*` / `load_*` for `norm_stats.pkl`, `feature_scheme.json`, `bt_config.json`, `active_universe.json` and the backtest CSVs. Formats stay readable by run1–run20. |
 | `inference.py` | `forecast_latest(model, panel, n_days)` scores the freshest label-less panel dates. `predict_for_yesterday(model, norm_stats, universe, device, feature_mode)` builds features from the cache up to the latest close (live trading). |
 
 ### `src/data/` — data layer
@@ -144,25 +144,29 @@ Import directions (each folder imports only from the ones listed):
 |---|---|
 | `import_tej.py` | Reads TEJ half-year CSVs from `data/raw/TEJ/` and writes per-(stock, year) cache files to `data/interim/`. `--universe TW50` (default) / `TM100` / `BOTH` filters which codes to keep. Runs in <30s, no network. |
 | `extend_il.py` | Runs the next r=20-day IL step on an existing run (`--run runN`, `--dry-run` to preview) and appends to its `final.pt`, `il_log.csv` and `predictions.csv`, backing up the old weights first. |
-| `train_il_baseline.py` | Ablation baseline: plain GRU with vanilla MSE pretrain and N=10 SGD fine-tune steps per IL window (no adapters, no FOMAML). Same splits, universe and backtest as `train.py`; writes `models/run18/` and points `CURRENT` at it. |
-| `train_lgbm_baseline.py` | Ablation baseline: LightGBM on flattened Alpha360 features, static or refit every r=20 days. Writes the next `models/runN/` but leaves `CURRENT` alone (deploy can't load it). |
+| `train_il_baseline.py` | Ablation baseline: plain GRU with vanilla MSE pretrain and N=10 SGD fine-tune steps per IL window (no adapters, no FOMAML). Same splits, universe and backtest as `train.py`; logs the next `runN` (run18 was the first) to the `il_baseline` experiment; leaves the `current` tag alone (deploy loads DoubleAdapt, not a plain GRU). |
+| `train_lgbm_baseline.py` | Ablation baseline: LightGBM on flattened Alpha360 features, static or refit every r=20 days. Logs the next `runN` to the `lgbm_baseline` experiment but leaves the `current` tag alone (deploy can't load it). |
 | `compute_qlib_metrics.py` | Prints the qlib-style metrics table used in [model_performance.md](model_performance.md) (IC, ICIR, IR, excess return vs the 0050 benchmark) from each run's `equity.csv` + `report.json`. |
 | `run_course_backtest.py` | Bridges DoubleAdapt predictions into the course's `BacktestSystem` (from `thirdparty/stock_project_for_class/backtest_package/`). Pre-builds the framework's stock cache from `data/interim/`, defines `select_stock` / `trade_strategy` mirroring [examplebacktest.py](../thirdparty/stock_project_for_class/backtest_package/stock_backtest_v1/examplebacktest.py), saves `course_backtest.xlsx` per run, optionally uploads to leaderboard via `--upload`. |
-| `train.py` | The orchestrator. Loads bars → builds panel → applies universe schedule → fits feature norm → pretrain → IL → backtest → live forecast. `--universe TW50` (default) / `TM100` picks which TEJ index to train against. Writes all artifacts to `models/run{N}/`. Tees full stdout/stderr to `logs/train_run{N}_YYYYMMDD_HHMMSS.log`. |
-| `deploy_today.py` | Daily inference + order submission. **Requires `--cash NT$`** (read from the course website). Logs orders to `models/run{N}/orders_YYYYMMDD.csv`, inferences to `inferences_YYYYMMDD.csv`, and tees full stdout to `logs/deploy_YYYYMMDD.log` (appended across multiple calls per day). |
+| `train.py` | The orchestrator. Loads bars → builds panel → applies universe schedule → fits feature norm → pretrain → IL → backtest → live forecast. `--universe TW50` (default) / `TM100` picks which TEJ index to train against. Logs a new MLflow run `run{N}` (experiment `doubleadapt`, tagged current) with per-epoch / per-step metrics, all artifacts, and full stdout/stderr in its `train.log`. |
+| `deploy_today.py` | Daily inference + order submission. **Requires `--cash NT$`** (read from the course website). Logs orders to `orders_YYYYMMDD.csv` and inferences to `inferences_YYYYMMDD.csv` in the current run's artifacts, and tees full stdout to `logs/deploy_YYYYMMDD.log` (appended across multiple calls per day). |
 | `holdings.py` | Query current settled holdings via `Get_User_Stocks`, cross-reference against today's order log to show which submitted orders filled. |
 
 ### `logs/` — session logs (gitignored)
 
 | File | Contents |
 |---|---|
-| `train_run{N}_YYYYMMDD_HHMMSS.log` | Per-run full training session capture (every print from train.py) |
 | `deploy_YYYYMMDD.log` | Append-mode daily deploy session log (every invocation of `deploy_today.py`) |
 
-### `models/` — training artifacts
+### `mlruns/` — MLflow runs
 
-One `run{N}/` per `train.py` run; the full file list is in the
-[README's Outputs table](../README.md#outputs-modelsrunn).
+One MLflow run per training run (`run{N}`), in an experiment per workflow:
+`doubleadapt`, `il_baseline`, `lgbm_baseline` (plus `tests`, holding the
+migrated `test_2330` output). Artifacts live in
+`mlruns/artifacts/<experiment>/<run_id>/artifacts/`; the full file list is in the
+[README's Outputs table](../README.md#outputs-one-mlflow-run-per-training-run).
+SQLite backend (`mlruns/mlflow.db`) because MLflow 3 no longer accepts qlib's
+plain file store. Browse with `mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db`.
 
 ## `thirdparty/qlib/` — reference clone
 
@@ -260,7 +264,7 @@ TEJ TW50.csv / TM100.csv  ─ universe.py ──────┼──> universe 
 - The qlib clone is **never** imported — it's reference material only.
 - `stock_api` and `backtest_package` live outside `src/` to keep the
   third-party package surface obvious.
-- Data and training artifacts (`data/interim/`, `models/`, `logs/`, and the
+- Data and training artifacts (`data/interim/`, `mlruns/`, `logs/`, and the
   raw CSVs under `data/raw/`) are gitignored. Everything except `data/raw/`
   is reproducible from `scripts/import_tej.py` + `scripts/train.py`.
 - `src/` holds code only. Every path comes from `src/config.py`, so moving a

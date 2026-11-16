@@ -19,6 +19,8 @@ from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
+from src import runs
+
 # Match a Greek letter optionally followed by ASCII letters / digits / more
 # Greek letters — captures Greek-start identifiers like "α" or "θ" while not
 # gobbling Mandarin text. Note: limit italics to Greek-starting tokens so
@@ -41,7 +43,8 @@ _SUB_PAT = re.compile(
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OUT_PATH = PROJECT_ROOT / "docs" / "report.docx"
 FIG = PROJECT_ROOT / "docs" / "figures"
-OUTPUT_BASE = PROJECT_ROOT / "models"
+# Runs live in MLflow (mlruns/); map run name -> artifact folder once.
+RUN_DIRS = runs.list_runs()
 
 CJK_FONT = "標楷體"
 EN_FONT = "Times New Roman"
@@ -203,7 +206,9 @@ def add_page_break(doc):
 
 
 def load_summary(run):
-    p = OUTPUT_BASE / run / "report.json"
+    if run not in RUN_DIRS:
+        return None
+    p = RUN_DIRS[run] / "report.json"
     if not p.exists():
         return None
     r = json.loads(p.read_text())

@@ -125,8 +125,8 @@ No network access during training — everything reads from local disk.
 
 The repo follows the [cookiecutter-data-science](https://cookiecutter-data-science.drivendata.org/)
 layout: `data/raw/` (immutable inputs), `data/interim/` (rebuildable cache),
-`data/processed/` and `data/external/` (unused for now), `models/` (training
-runs) and `logs/`. All paths are defined in [src/config.py](src/config.py).
+`data/processed/` and `data/external/` (unused for now), `mlruns/` (MLflow
+store: one run per training run, like qlib's recorder) and `logs/` (deploy logs). All paths are defined in [src/config.py](src/config.py).
 
 ## Quickstart
 
@@ -146,7 +146,8 @@ conda activate dlst
 python src/scripts/import_tej.py
 
 # 4. Pretrain + warmup IL + online IL + backtest + live forecast.
-#    Artifacts -> models/run{N}/, CURRENT pointer updates automatically.
+#    Artifacts -> a new MLflow run (run{N}) in mlruns/, tagged as the current run.
+#    Compare runs in a browser:  mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db
 python src/scripts/train.py                  # uses TW50
 python src/scripts/train.py --universe TM100 # broader universe
 
@@ -162,7 +163,17 @@ python src/scripts/deploy_today.py --cash 100000000
 #    runs every run's predictions.csv through the same engine.
 ```
 
-## Outputs (`models/run{N}/`)
+## Outputs (one MLflow run per training run)
+
+Runs are tracked with MLflow, the way qlib's recorder does it: each training
+run is an MLflow run named `run{N}` in an experiment per workflow
+(`doubleadapt`, `il_baseline`, `lgbm_baseline`). It records the command line
+(param `cmd-sys.argv`), the config as params, per-epoch / per-step metrics
+(`train_loss`, `val_ic`, `warmup_ic`, `live_ic`, `live_equity`, ...), summary
+metrics (`backtest.sharpe`, `il_overall_ic`, ...) and these artifacts, stored
+under `mlruns/artifacts/<experiment>/<run_id>/artifacts/`. Look a run up with
+`runs.resolve_run("run17")`; the run `deploy_today.py` trades with carries the
+tag `current=true`. runs 1-20 were migrated from the old `models/run{N}/` folders.
 
 | File | What it is |
 |---|---|
@@ -183,6 +194,8 @@ python src/scripts/deploy_today.py --cash 100000000
 | `bt_config.json` | Trading config used by backtest + deploy_today |
 | `course_backtest.xlsx` | Course-framework backtest output (regenerated on each `run_course_backtest.py` invocation) |
 | `report.json` | Summary: best IC, IL stats, backtest metrics, full config |
+| `train.log` | Full console log of the training session |
+| `code_diff.txt` / `code_status.txt` | Uncommitted code at training time (as qlib records it) |
 
 ## Key design choices
 

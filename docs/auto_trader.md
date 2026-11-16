@@ -64,14 +64,16 @@ This now writes (in addition to the IL/backtest artifacts):
 
 | File | Used by |
 |---|---|
-| `models/run{N}/final.pt` | model weights |
-| `models/run{N}/norm_stats.pkl` | RobustZScoreNorm `(median, MAD)` from pretrain |
-| `models/run{N}/active_universe.json` | the 50 stocks the model is scoring |
-| `models/run{N}/bt_config.json` | trading config (`top_k=10, n_drop=3, ...`) |
-| `models/CURRENT` | text file naming the active run (e.g. `run5`) |
+| `final.pt` | model weights |
+| `norm_stats.pkl` | RobustZScoreNorm `(median, MAD)` from pretrain |
+| `active_universe.json` | the 50 stocks the model is scoring |
+| `bt_config.json` | trading config (`top_k=10, n_drop=3, ...`) |
+| tag `current=true` | marks the MLflow run deploy trades with |
 
-`train.py` auto-increments to the next available `run{N}/` and updates `CURRENT`
-to point at the new run. `deploy_today.py` reads `CURRENT` (or `--run runX` to override).
+These are artifacts of the run's MLflow run (see `src/runs.py`). `train.py`
+creates the next `run{N}` and tags it current; `deploy_today.py` reads the
+current run (or `--run runX` to override). To deploy an older run:
+`python -c "from src import runs; runs.set_current(runs.find_run('run9').info.run_id)"`.
 
 ### 2. Credentials
 
@@ -154,14 +156,14 @@ in 4 phases:
 [4/4] submit orders
        for SELL: Sell_Stock(account, password, code, lots, price)
        for BUY:  Buy_Stock(account, password, code, lots, price)
-       log every attempt to models/run{N}/orders_YYYYMMDD.csv
-       log every top-10 inference snapshot to models/run{N}/inferences_YYYYMMDD.csv
+       log every attempt to <run artifacts>/orders_YYYYMMDD.csv
+       log every top-10 inference snapshot to <run artifacts>/inferences_YYYYMMDD.csv
        tee full stdout to logs/deploy_YYYYMMDD.log
 ```
 
 ## Output
 
-`models/run{N}/orders_YYYYMMDD.csv` accumulates one row per attempted
+`orders_YYYYMMDD.csv` (an artifact of the current run) accumulates one row per attempted
 order each run:
 
 | col | example |

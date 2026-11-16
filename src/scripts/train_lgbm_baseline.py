@@ -21,7 +21,7 @@ Two modes:
           This is the closest tree analogue to the GRU's IL fine-tuning.
 
 Usage:
-  python -m src.scripts.train_lgbm_baseline                  # -> models/runN (next free)
+  python -m src.scripts.train_lgbm_baseline                  # -> next free runN (MLflow, experiment lgbm_baseline)
   python -m src.scripts.train_lgbm_baseline --mode rolling --run run20
 """
 
@@ -119,6 +119,7 @@ class _TqdmCallback:
         metrics = {f"{r[0]}_{r[1]}": r[2] for r in (env.evaluation_result_list or [])}
         if metrics:
             self.bar.set_postfix({k: f"{v:.5f}" for k, v in metrics.items()}, refresh=False)
+            runs.log_metrics(metrics, step=env.iteration)
             if self.log_every and (env.iteration + 1) % self.log_every == 0:
                 log(f"[lgbm] round {env.iteration + 1:4d}: " + "  ".join(f"{k}={v:.5f}" for k, v in metrics.items()))
 
@@ -235,6 +236,7 @@ def predict_rolling(panel: PanelTensors, n_rounds: int, start: str, end: str) ->
             f"[refit] step {step:3d}: t={pd.Timestamp(win[0]).date()} "
             f"n_train={len(tr):,} ic={ic:+.4f} ric={ric:+.4f}"
         )
+        runs.log_metrics({"refit_ic": ic, "refit_ric": ric}, step=step)
         bar.set_postfix(ic=f"{ic:+.4f}")
     return pd.DataFrame(rows), pd.DataFrame(pred_rows)
 
@@ -243,11 +245,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--universe", default="TW50")
     ap.add_argument("--mode", choices=["static", "rolling"], default="static")
-    ap.add_argument("--run", default=None, help="output dir name (default: next runN)")
+    ap.add_argument("--run", default=None, help="MLflow run name (default: next runN)")
     args = ap.parse_args()
 
-    # deploy_today.py can't load a LightGBM run, so leave CURRENT alone.
-    out_dir = runs.init_run(args.run, set_as_current=False)
+    # deploy_today.py can't load a LightGBM run, so leave the current tag alone.
+    out_dir = runs.init_run(args.run, experiment="lgbm_baseline", set_as_current=False)
     t0 = time.monotonic()
     np.random.seed(0)
     print(f"universe: {args.universe}  feature_mode: {FEATURE_MODE}  mode: {args.mode}")
@@ -334,6 +336,7 @@ def main():
         "wall_time_min": (time.monotonic() - t0) / 60.0,
     }
     (out_dir / "report.json").write_text(json.dumps(report, indent=2, default=str))
+    runs.log_report(report)
 
     s = bt.summary
     print("\n=== summary ===")

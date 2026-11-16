@@ -27,6 +27,7 @@ from src.model.double_adapt import DoubleAdapt
 from src.evaluate.metrics import cross_sectional_ic
 from src.trainer.maml import FOMAMLConfig, panel_to_task, fomaml_step
 from src.evaluate.backtest_qlib import BTResult, PortfolioSim, QlibBTConfig
+from src import runs
 from src.utils.progress import pbar, log, n_walk_steps
 from src.config import ONLINE_TRAINING_START
 
@@ -45,6 +46,7 @@ def run_incremental(
     device: torch.device,
     log_fn: Callable[[str], None] = log,
     desc: str = "IL",
+    metric_prefix: str = "il",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     optim_phi = torch.optim.Adam(model.ma_parameters(), lr=fcfg.lr_phi, weight_decay=fcfg.weight_decay)
     optim_psi = torch.optim.Adam(model.da_parameters(), lr=fcfg.lr_psi, weight_decay=fcfg.weight_decay)
@@ -114,6 +116,9 @@ def run_incremental(
             f"{pd.Timestamp(udates[min(i + fcfg.r - 1, len(udates) - 1)]).date()} "
             f"n_train={task.x_train.shape[0]:5d} n_test={task.x_test.shape[0]:5d} "
             f"loss={test_loss:.5f} ic={ic:+.4f} ric={ric:+.4f}"
+        )
+        runs.log_metrics(
+            {f"{metric_prefix}_ic": ic, f"{metric_prefix}_ric": ric, f"{metric_prefix}_loss": test_loss}, step=step
         )
         bar.set_postfix(t=str(pd.Timestamp(udates[i]).date()), ic=f"{ic:+.4f}")
 
@@ -255,6 +260,9 @@ def run_qlib_backtest_with_il(
             else ""
         )
         if sim.equity_rows:
+            runs.log_metrics(
+                {"live_ic": ic, "live_ric": ric, "live_loss": test_loss, "live_equity": sim.last_equity}, step=step
+            )
             bar.set_postfix(ic=f"{ic:+.4f}", equity=f"{sim.last_equity:,.0f}")
         i += fcfg.r
         step += 1

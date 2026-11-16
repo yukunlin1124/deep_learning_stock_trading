@@ -8,8 +8,10 @@ Paths follow the cookiecutter-data-science layout:
     data/interim/    derived, rebuildable data (per-stock bar cache from import_tej.py)
     data/processed/  final model-ready datasets (unused for now)
     data/external/   third-party data that isn't TEJ (unused for now)
-    models/          trained runs: weights, predictions, backtest reports
-    logs/            session logs (train / deploy)
+    mlruns/          MLflow tracking store (qlib's recorder flow): one MLflow run per
+                     training run, holding its model, predictions, metrics, train.log,
+                     command line and git diff. Browse with `mlflow ui` (see src/runs.py).
+    logs/            deploy session logs (train logs live inside each MLflow run)
 
 Everything except data/raw/ is safe to delete and regenerate. Import paths
 from here instead of rebuilding them from __file__ in each script.
@@ -32,7 +34,11 @@ EXTERNAL_DATA_DIR = DATA_DIR / "external"
 TEJ_DIR = RAW_DATA_DIR / "TEJ"  # see data/raw/TEJ/data.yaml
 CACHE_DIR = INTERIM_DATA_DIR  # {code}_{year}.csv bars + 0050_benchmark.csv
 
-MODELS_DIR = PROJ_ROOT / "models"  # run{N}/ + CURRENT pointer
+# MLflow store. SQLite backend because MLflow 3 no longer accepts qlib's plain
+# file store (file:./mlruns); artifacts stay ordinary folders under ARTIFACT_ROOT.
+MLRUNS_DIR = PROJ_ROOT / "mlruns"
+TRACKING_URI = "sqlite:///" + (MLRUNS_DIR / "mlflow.db").as_posix()
+ARTIFACT_ROOT = MLRUNS_DIR / "artifacts"  # <experiment>/<run_id>/artifacts/
 LOGS_DIR = PROJ_ROOT / "logs"
 
 # ---------- Experiment date windows ----------
@@ -63,6 +69,6 @@ LIVE_HISTORY_START = "2024-01-01"
 
 # ---------- Default backtest config ----------
 # Keyword arguments for evaluate.backtest_qlib.QlibBTConfig used by every
-# training run (written to models/run{N}/bt_config.json). A plain dict so this
+# training run (written to each run's bt_config.json). A plain dict so this
 # module stays free of imports from the rest of src/.
 DEFAULT_BT: dict[str, Any] = dict(top_k=10, n_drop=1, cost_alpha_bps=70.0, costs="twse", deal_price="close")

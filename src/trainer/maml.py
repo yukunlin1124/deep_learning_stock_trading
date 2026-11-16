@@ -28,6 +28,7 @@ from src.data.handler import PanelTensors
 from src.data.processor import csrank_normalize_per_date
 from src.model.double_adapt import DoubleAdapt
 from src.evaluate.metrics import cross_sectional_ic
+from src import runs
 from src.utils.progress import pbar, log
 
 # ----------------- task sampling -----------------
@@ -252,6 +253,10 @@ def pretrain_offline(
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
             bad_epochs += 1
+        runs.log_metrics(
+            {"train_loss": train_loss, "val_ic": ic, "val_icir": icir, "val_ric": ric, "val_ricir": ricir},
+            step=epoch,
+        )
         epoch_bar.set_postfix(loss=f"{train_loss:.5f}", val_ic=f"{ic:.4f}", best=f"{best_ic:.4f}", bad=bad_epochs)
         if bad_epochs and bad_epochs >= pcfg.early_stop_patience:
             log_fn(

@@ -45,6 +45,8 @@ dependencies:
       - yfinance
       # Progress bars
       - tqdm>=4.66
+      # Experiment tracking, like qlib's recorder (store: mlruns/, see src/runs.py)
+      - mlflow>=3.0
       # Lint (same tools as qlib; config in pyproject.toml + .flake8)
       - black
       - flake8

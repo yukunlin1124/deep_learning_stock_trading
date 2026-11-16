@@ -15,10 +15,10 @@ import json
 import numpy as np
 import pandas as pd
 
-from src.config import CACHE_DIR, MODELS_DIR
+from src import runs
+from src.config import CACHE_DIR
 
 BENCHMARK_CSV = CACHE_DIR / "0050_benchmark.csv"
-OUTPUT_DIR = MODELS_DIR
 RUNS = [
     "run1",
     "run2",
@@ -50,7 +50,7 @@ def _load_benchmark() -> pd.DataFrame:
 
 
 def _run_metrics(run: str, bm: pd.DataFrame) -> dict:
-    d = OUTPUT_DIR / run
+    d = runs.resolve_run(run)
     rpt = json.loads((d / "report.json").read_text())
     bt = rpt["backtest"]
     eq = pd.read_csv(d / "equity.csv", parse_dates=["date"]).sort_values("date").reset_index(drop=True)

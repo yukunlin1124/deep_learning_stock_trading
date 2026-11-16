@@ -10,7 +10,7 @@ universe, robust z-score on pretrain rows, CSRankNorm wrap on labels for
 stability, r=20 IL cadence, TopkDropoutStrategy with top_k=10/n_drop=1,
 TWSE costs.
 
-Output: models/run18/ with same artifact shape as run9.
+Output: a new MLflow run (experiment il_baseline; run18 was the first) with the same artifact shape as run9.
 """
 
 from __future__ import annotations
@@ -128,6 +128,7 @@ def vanilla_pretrain(model: GRUBase, train_panel: PanelTensors, val_panel: Panel
             bad = 0
         else:
             bad += 1
+        runs.log_metrics({"train_loss": train_loss, "val_ic": ic, "val_ric": ric}, step=epoch)
         epoch_bar.set_postfix(loss=f"{train_loss:.4f}", val_ic=f"{ic:+.4f}", best=f"{best_ic:.4f}", bad=bad)
         if bad and bad >= PRETRAIN_PATIENCE:
             log(f"[pretrain] early stop @ epoch {epoch} (best val_ic={best_ic:.4f})")
@@ -239,6 +240,7 @@ def run_il_baseline(
             f"n_train={int(train_mask.sum()):5d} n_test={int(test_mask.sum()):5d} "
             f"loss={train_loss:.5f} ic={ic:+.4f} ric={ric:+.4f}"
         )
+        runs.log_metrics({f"{desc}_ic": ic, f"{desc}_ric": ric, f"{desc}_loss": train_loss}, step=step)
         bar.set_postfix(t=str(pd.Timestamp(test_dates[0]).date()), ic=f"{ic:+.4f}")
 
         i += IL_WINDOW
@@ -253,10 +255,11 @@ def run_il_baseline(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--universe", default="TW50")
-    ap.add_argument("--run", default="run18", help="output dir name")
+    ap.add_argument("--run", default=None, help="MLflow run name (default: next runN)")
     args = ap.parse_args()
 
-    out_dir = runs.init_run(args.run)  # also points CURRENT at it
+    # deploy_today.py loads a DoubleAdapt model, which a plain-GRU run can't fill, so leave the current tag alone.
+    out_dir = runs.init_run(args.run, experiment="il_baseline", set_as_current=False)
     t0 = time.monotonic()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
@@ -316,7 +319,7 @@ def main():
 
     print(f"\n=== Stage 2: warmup IL ({VALIDATION_START} -> {ONLINE_TRAINING_START}) ===")
     warmup_log, _, _ = run_il_baseline(
-        model, il_panel, bars, start_date=VALIDATION_START, end_date=ONLINE_TRAINING_START, device=device
+        model, il_panel, bars, start_date=VALIDATION_START, end_date=ONLINE_TRAINING_START, device=device, desc="warmup"
     )
     torch.save(model.state_dict(), out_dir / "final_prep.pt")
     warmup_log.to_csv(out_dir / "warmup_log.csv", index=False)
@@ -325,7 +328,7 @@ def main():
     online_end = str(pd.Timestamp(panel.dates.max()).date())
     print(f"\n=== Stage 3: live-IL backtest ({ONLINE_TRAINING_START} -> {online_end}) ===")
     step_log, preds, _ = run_il_baseline(
-        model, il_panel, bars, start_date=ONLINE_TRAINING_START, end_date=online_end, device=device
+        model, il_panel, bars, start_date=ONLINE_TRAINING_START, end_date=online_end, device=device, desc="live"
     )
     torch.save(model.state_dict(), out_dir / "final.pt")
     step_log.to_csv(out_dir / "il_log.csv", index=False)
@@ -387,6 +390,7 @@ def main():
         "wall_time_min": (time.monotonic() - t0) / 60.0,
     }
     (out_dir / "report.json").write_text(json.dumps(report, indent=2, default=str))
+    runs.log_report(report)
 
     print(f"\n=== summary ===")
     print(f"  pretrain best val IC : {pre_res['best_val_ic']:.4f}")

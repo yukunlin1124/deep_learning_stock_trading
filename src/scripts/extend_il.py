@@ -52,7 +52,7 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    run_dir = runs.resolve_run(args.run)  # --run is required, so CURRENT is never used
+    run_dir = runs.resolve_run(args.run)  # --run is required, so the current tag is never used
 
     report = json.loads((run_dir / "report.json").read_text())
     universe = report["universe"]

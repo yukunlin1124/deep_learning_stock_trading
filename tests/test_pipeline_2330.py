@@ -25,7 +25,7 @@ So THIS TEST VERIFIES PLUMBING, NOT MODEL QUALITY. It catches:
 For a real signal-quality test, run the full pipeline on the 50-stock
 universe via `python src/scripts/train.py`.
 
-Outputs are written to models/test_2330/ so they don't clobber models/.
+Outputs go to a temp folder (test_2330_*), not to a tracked MLflow run.
 
 Run (either works; pytest skips instead of passing when the cache is incomplete):
     pytest -m slow
@@ -36,6 +36,9 @@ from __future__ import annotations
 
 import json
 import time
+
+import tempfile
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -51,7 +54,6 @@ else:
 
 from src.data.io import fetch_range, CACHE_DIR
 from src.config import (
-    MODELS_DIR,
     HISTORY_START,
     HISTORY_END,
     PRETRAIN_START,
@@ -87,8 +89,8 @@ from src.evaluate.backtest_qlib import (
 from src.inference import forecast_latest
 
 TEST_STOCK = "2330"
-OUT_DIR = MODELS_DIR / "test_2330"
-OUT_DIR.mkdir(exist_ok=True)
+# Smoke-test outputs go to a temp folder; they are not a tracked MLflow run.
+OUT_DIR = Path(tempfile.mkdtemp(prefix="test_2330_"))
 
 # Date splits come from src/config.py, the same values train.py uses.
 REQUIRED_YEARS = list(range(2016, 2027))  # 2016..2026 inclusive

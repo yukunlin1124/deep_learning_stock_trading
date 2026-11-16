@@ -198,8 +198,10 @@ import pickle
 
 # Load the post-warmup checkpoint + norm stats
 model = DoubleAdapt(seq_len=60, n_fields=6).to("cuda")
-model.load_state_dict(torch.load("models/run6/final_prep.pt"))
-norm = pickle.load(open("models/run6/norm_stats.pkl", "rb"))
+from src import runs
+run_dir = runs.resolve_run("run6")  # the run's MLflow artifact folder
+model.load_state_dict(torch.load(run_dir / "final_prep.pt"))
+norm = runs.load_norm_stats(run_dir)
 
 # Load + featurize + normalize bars (same as train.py)
 bars = {c: fetch_range(c, "2022-01-01", "2026-05-31")
@@ -229,7 +231,8 @@ from src.evaluate.backtest_qlib import QlibBTConfig, run_qlib_backtest_from_pred
 from src.data.io import fetch_range
 import pandas as pd
 
-preds = pd.read_csv('models/run6/predictions.csv', parse_dates=['date'])
+from src import runs
+preds = pd.read_csv(runs.resolve_run('run6') / 'predictions.csv', parse_dates=['date'])
 preds['stock_code_id'] = preds['stock_code_id'].astype(str)
 preds = preds[preds.date >= '2024-01-01']
 
@@ -251,17 +254,18 @@ import pandas as pd
 from src.evaluate.backtest_qlib import QlibBTConfig, run_qlib_backtest_from_predictions
 from src.data.io import fetch_range
 
+from src import runs
 CFG = QlibBTConfig(capital=1e8, top_k=10, n_drop=1, cost_alpha_bps=70,
                    costs='twse', deal_price='close', risk_degree=0.95)
 codes = set()
 for run in ['run1','run2','run3','run4','run5','run6','run7','run8','run9']:
-    df = pd.read_csv(f'models/{run}/predictions.csv')
+    df = pd.read_csv(runs.resolve_run(run) / 'predictions.csv')
     codes.update(df.stock_code_id.astype(str).unique())
 bars = {c: fetch_range(c, '2022-01-01', '2026-05-31') for c in codes}
 bars = {c: b for c, b in bars.items() if not b.empty}
 
 for run in ['run1','run2','run3','run4','run5','run6','run7','run8','run9']:
-    preds = pd.read_csv(f'models/{run}/predictions.csv', parse_dates=['date'])
+    preds = pd.read_csv(runs.resolve_run(run) / 'predictions.csv', parse_dates=['date'])
     preds['stock_code_id'] = preds['stock_code_id'].astype(str)
     preds = preds[preds.date >= '2024-01-01']
     s = run_qlib_backtest_from_predictions(preds, bars, CFG).summary
@@ -294,5 +298,5 @@ by inserting a 1-day lag — see [course_backtest.md](course_backtest.md).
 - [model_env.md](model_env.md) — what changed in each run (the inputs to this table)
 - [model_performance.md](model_performance.md) — qlib-style metrics (IC, ICIR, IR, excess return) vs 0050 benchmark
 - [course_backtest.md](course_backtest.md) — the other backtest engine (zero-cost, leaderboard-uploadable)
-- [auto_trader.md](auto_trader.md) — daily deploy pipeline using whichever run is in `CURRENT`
+- [auto_trader.md](auto_trader.md) — daily deploy pipeline using whichever run is tagged `current`
 - [topk_ndrop_selection.md](topk_ndrop_selection.md) — why top_k=10 / n_drop=1

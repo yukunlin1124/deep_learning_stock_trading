@@ -11,7 +11,7 @@ Pipeline:
   7. Portfolio backtest over the IL window using top-K limit-at-prev-close.
   8. Live forecast on the freshest 20 label-less dates.
 
-Artifacts -> models/run{N}/ (see src/runs.py).
+Artifacts -> an MLflow run in mlruns/ (see src/runs.py).
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ def main() -> None:
     args = ap.parse_args()
     universe_name = args.universe
 
-    OUT_DIR = runs.init_run()  # next free models/runN/, CURRENT -> it, tee to logs/
+    OUT_DIR = runs.init_run(experiment="doubleadapt")  # next free runN, tagged current, tee to train.log
     t0 = time.monotonic()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}")
@@ -172,7 +172,9 @@ def main() -> None:
         f"\n=== IL warmup ({VALIDATION_START} → {ONLINE_TRAINING_START}) — " f"final preparation on meta_valid_set ==="
     )
     warmup_cfg = ILConfig(start_date=VALIDATION_START, end_date=ONLINE_TRAINING_START)
-    warmup_log, warmup_preds = run_incremental(model, il_panel, fcfg, warmup_cfg, device, desc="IL warmup")
+    warmup_log, warmup_preds = run_incremental(
+        model, il_panel, fcfg, warmup_cfg, device, desc="IL warmup", metric_prefix="warmup"
+    )
     torch.save(model.state_dict(), OUT_DIR / "final_prep.pt")
     warmup_log.to_csv(OUT_DIR / "warmup_log.csv", index=False)
     print(f"saved final_prep.pt; warmup did {len(warmup_log)} IL steps")
@@ -276,6 +278,7 @@ def main() -> None:
         "wall_time_min": (time.monotonic() - t0) / 60.0,
     }
     (OUT_DIR / "report.json").write_text(json.dumps(report, indent=2, default=str))
+    runs.log_report(report)  # config -> MLflow params, numbers -> MLflow metrics
     print(f"\n=== summary ===")
     print(f"  pretrain best val IC : {pre_res['best_val_ic']:.4f}")
     print(f"  IL steps             : {len(step_log)}")
